@@ -1,0 +1,15 @@
+{
+  "name": "supple-sql",
+  "version": "1.0.1",
+  "main": "src/index.js",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vampirical/supple-sql.git"
+  },
+  "dependencies": {
+    "fast-deep-equal": "^3.1.3",
+    "pg-format": "^1.0.4",
+    "pg-protocol": "^1.6.0"
+  }
+}
