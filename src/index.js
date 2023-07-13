@@ -63,7 +63,6 @@ const Record = require('./Record');
 const Value = require('./SqlValue');
 const {Or} = require('./wheres');
 const {quoteIdentifier, quoteLiteral} = require('./utils/sql');
-const logger = require('../../utils/logger');
 const {DatabaseError} = require('pg-protocol');
 
 const {
@@ -104,7 +103,7 @@ async function getUsablePoolConnection(pool) {
     const msg = `Auto pruned pool connection with an ${
       error ? `error checking for an open transaction: ${error.message}` : 'open transaction'
     }.`;
-    logger.error(new Error(msg), null, null, {
+    console.error(new Error(msg), null, null, {
       _ending,
       _connecting,
       _connected,
