@@ -1,3 +1,4 @@
+'use strict';
 const {connectiveAnd, connectiveOr} = require('./constants');
 
 class ConnectedWheres extends Object {}

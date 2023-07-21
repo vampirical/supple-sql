@@ -1,3 +1,4 @@
+'use strict';
 const {quoteIdentifier: Q} = require('../constants');
 const pgFormat = require('pg-format');
 
