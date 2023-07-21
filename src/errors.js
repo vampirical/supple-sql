@@ -1,3 +1,5 @@
+'use strict';
+
 class CallbackRequiredError extends Error {
   constructor(message) {
     super(message);

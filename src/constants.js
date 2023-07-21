@@ -1,3 +1,5 @@
+'use strict';
+
 const codeStatementTimeout = '57014'; // Technically 57014 is all "query_canceled" but the only reason we expect to see it is a statement_timeout.
 
 const quoteIdentifier = '"';

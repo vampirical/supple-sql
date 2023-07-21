@@ -1,11 +1,5 @@
-// Desired API
 /*
-Organize the db pools
-  dbPool.primary
-  dbPool.replica
-  dbPool.analytics
-
-const newInvoice = new Invoice([connOrPool, ]{
+const newInvoice = new Invoice([connOrPool], {
   subtotal: 14.99,
   discounts: 0,
   taxes: 0,
@@ -17,22 +11,43 @@ const newInvoice = new Invoice([connOrPool, ]{
 newInvoice.total += 1.50;
 newInvoice.save();
 
-const invoice = Invoice.getByPrimaryKey([connOrPool], id);
+const invoice = Invoice.findByPk([connOrPool], id);
 invoice.total += 1.50;
 invoice.save();
 
-const invoices = await Invoice.find([connOrPool], {id: ['ZZZ', 'YYY']}, {orderBy: ['createdAt', SQL.sort.desc], limit: 10});
+const invoices = await Invoice.find([connOrPool], {stripeInvoiceId: ['ZZZ', 'YYY']}, {orderBy: ['createdAt', SQL.sort.desc], limit: 10});
+
+const invoice = await Invoice.findOne([connOrPool], {id: 'ZZZ');
+if (!invoice) {
+  // No invoice found.
+}
 
 ----
 
-SQL.transaction((conn) => {
+const returned = await SQL.connected((conn) => {
   // If a pool is passed in then a connection is automatically created and released.
-  // If a connection is passed in it will be used directly.
-  // Throws are caught and the transaction is rolled back.
+  // Throws are passed through after the connection is cleaned up.
+  // The return value is passed through.
 
-  const invoice = await Invoice.getByPrimaryKey(conn, id);
+  const invoice = await Invoice.findByPk(conn, id);
   invoice.total += 1.50;
   invoice.save();
+
+  return invoice;
+}, {pool});
+
+
+const returned = await SQL.transaction((conn) => {
+  // Like connected() but with an added transaction.
+  // If a connection is passed in it will be used directly.
+  // Throws are caught and the transaction is rolled back.
+  // On a successful commit the return value is passed through.
+
+  const invoice = await Invoice.findByPk(conn, id);
+  invoice.total += 1.50;
+  invoice.save();
+
+  return invoice;
 }, {connection, pool});
 
 ----
@@ -43,7 +58,7 @@ SQL.setDefaultPool(dbPool.primary);
 
 // Connection and pool options are optional, default pool will be used if not specified.
 const invoices = await SQL.transaction((conn) => async {
-  const invoice = await Invoice.getByPrimaryKey(conn, 5);
+  const invoice = await Invoice.findByPk(conn, 5);
   invoice.total += 1.50;
   await invoice.save();
 
@@ -53,10 +68,11 @@ const invoices = await SQL.transaction((conn) => async {
 });
 
 // First connOrPool arg is optional, will default to default pool.
-const primaryInvoice = await Invoice.getByPrimaryKey(5);
-const replicaInvoice = await Invoice.getByPrimaryKey(dbPool.replica, 5);
+const primaryInvoice = await Invoice.findByPk(5);
+const replicaInvoice = await Invoice.findByPk(dbPool.replica, 5);
 */
 
+'use strict';
 const {codeStatementTimeout, sort, type, valueNotNull, valueNow} = require('./constants');
 const errors = require('./errors');
 const Record = require('./Record');
@@ -121,27 +137,30 @@ async function getUsablePoolConnection(pool) {
 const SQL = {
   sort,
   type,
+
   Value,
   valueNotNull,
   valueNow,
 
-  ...errors,
-
   quoteIdentifier,
   quoteLiteral,
 
-  defaultPool: null,
+  ...errors,
+
+  pools: {
+    ['default']: null,
+  },
   getDefaultPool() {
-    const pool = this.defaultPool;
+    const pool = this.pools.default;
     if (!pool) {
       throw new NoPoolSetError(
-        'getDefaultPool() called before setDefaultPool() has provided a valid pool.'
+        'getDefaultPool() called before setDefaultPool()'
       );
     }
     return pool;
   },
   setDefaultPool(pool) {
-    this.defaultPool = pool;
+    this.pools.default = pool;
   },
 
   async connected(callback, {pool = null} = {}) {

@@ -1,7 +1,11 @@
 {
   "name": "supple-sql",
-  "version": "1.0.1",
+  "version": "0.0.10",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./generate": "./src/generate.js"
+  },
   "scripts": {},
   "repository": {
     "type": "git",

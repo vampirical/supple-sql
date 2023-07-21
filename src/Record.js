@@ -1,3 +1,4 @@
+'use strict';
 /* eslint-disable no-console */
 const {connectiveAnd, type, valueNotNull, valueNow} = require('./constants');
 const {
@@ -23,6 +24,14 @@ class Record extends Object {
   static privateFields = []; // Require an extra hoop to extract these values.
   static table = '';
 
+  static async findByPk(...args) {
+    return this.findOne(...args);
+  }
+
+  static async deleteByPk(...args) {
+    return this.deleteOne(...args);
+  }
+
   static async findOne(...args) {
     const type = this.prototype.constructor;
     const instance = new type(...args);
@@ -36,14 +45,6 @@ class Record extends Object {
     const instance = new type(...args);
 
     return instance.delete();
-  }
-
-  static async getByPrimaryKey(...args) {
-    return this.findOne(...args);
-  }
-
-  static async deleteByPrimaryKey(...args) {
-    return this.deleteOne(...args);
   }
 
   static async find(...args) {
@@ -123,7 +124,7 @@ class Record extends Object {
     });
   }
 
-  static async getFromDbRow(...args) {
+  static async newFromDbRow(...args) {
     // Assumes external callers are generally going to be using the default object row mode.
 
     const type = this.prototype.constructor;
@@ -145,8 +146,8 @@ class Record extends Object {
   conn = null;
   pool = null;
 
-  data = {};
-  dataClean = {};
+  values = {};
+  valuesClean = {};
 
   isFieldSet = {};
 
@@ -231,8 +232,6 @@ class Record extends Object {
       try {
         conn = await this.pool.connect();
       } catch (err) {
-        console.error(err);
-
         if (conn) {
           conn.release();
         }
@@ -258,12 +257,12 @@ class Record extends Object {
   }
 
   isFieldDirty(key) {
-    let current = this.data[key] ?? null;
+    let current = this.values[key] ?? null;
     if (current instanceof Date) {
       current = current.toISOString();
     }
 
-    let clean = this.dataClean[key] ?? null;
+    let clean = this.valuesClean[key] ?? null;
     if (clean instanceof Date) {
       clean = typeof current === 'number' ? clean.getTime() : clean.toISOString();
     }
@@ -291,9 +290,9 @@ class Record extends Object {
         this.primaryKeyInternalValues[fieldKey] = this.get(fieldKey);
       }
 
-      this.dataClean = {...this.data};
+      this.valuesClean = {...this.values};
     } else {
-      this.dataClean = {};
+      this.valuesClean = {};
     }
 
     this.isLoaded = isLoaded;
@@ -476,7 +475,7 @@ class Record extends Object {
       throw new FieldNotFoundError(key, this.constructor.name);
     }
 
-    return this.data[key];
+    return this.values[key];
   }
 
   set(key, value) {
@@ -484,7 +483,7 @@ class Record extends Object {
       throw new FieldNotFoundError(key, this.constructor.name);
     }
 
-    this.data[key] = value;
+    this.values[key] = value;
     this.isFieldSet[key] = true;
   }
 
@@ -647,7 +646,7 @@ class Record extends Object {
     if (this.isLoaded) {
       const setStrings = [];
       const setValues = [];
-      const sqlFields = this.getSqlFields(this.getObject({includePrivate: true, onlyDirty: true}));
+      const sqlFields = this.getSqlFields(this.data({includePrivate: true, onlyDirty: true}));
       for (const sqlField of Object.values(sqlFields)) {
         setStrings.push(sqlField.name + ' = ' + sqlField.string);
         if (sqlField.bind) {
@@ -711,7 +710,7 @@ class Record extends Object {
       const insertValueStrings = [];
       const insertValues = [];
       const sqlFields = this.getSqlFields(
-        this.getObject({includeDefaults: true, includePrivate: true, onlyDirty: true})
+        this.data({includeDefaults: true, includePrivate: true, onlyDirty: true})
       );
       for (const sqlField of Object.values(sqlFields)) {
         insertFields.push(sqlField.name);
@@ -769,7 +768,7 @@ class Record extends Object {
     this.setLoaded(true, true);
   }
 
-  getObject({
+  data({
     fields = null,
     includeDefaults = false,
     includePrivate = false,
@@ -805,7 +804,7 @@ class Record extends Object {
   }
 
   toJSON() {
-    return this.getObject();
+    return this.data();
   }
 }
 

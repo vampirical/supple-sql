@@ -1,8 +1,7 @@
-/* eslint-disable no-console */
-
+'use strict';
+const SQL = require('./index');
 const {parseArgs} = require('./utils/args');
 const {toCamel, toSnake} = require('./utils/case');
-const SQL = require('./index');
 
 const infoQueryTable = `
 SELECT
@@ -36,15 +35,15 @@ WHERE
 ORDER BY ordinal_position
 `;
 
-async function generateRecord(...originalArgs) {
-  const {connOrPool, args} = parseArgs(originalArgs);
-  const conn = connOrPool || require('./index').getDefaultPool();
+async function generateRecord(...args) {
+  const {connOrPool, args: parsedArgs} = parseArgs(args);
+  const conn = connOrPool || SQL.getDefaultPool();
 
-  const tableName = args[0];
+  const tableName = parsedArgs[0];
   if (!tableName) {
     throw new Error('Table name arg is required.');
   }
-  const schemaName = args[1] || 'public';
+  const schemaName = parsedArgs[1] || 'public';
 
   const tableResp = await conn.query({
     text: infoQueryTable,
