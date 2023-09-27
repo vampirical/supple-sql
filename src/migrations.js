@@ -2,6 +2,13 @@ const {quoteIdentifier} = require('./utils/sql');
 const path = require('path');
 const pFs = require('fs').promises;
 
+/**
+ * Run plain sql migration files from a directory.
+ * @memberof SQL
+ *
+ * @param {pg.Pool} pool
+ * @param {string} pathToSqlFiles
+ */
 async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_migrations', quiet = false} = {}) {
   const migrationFiles = (await pFs.readdir(pathToSqlFiles)).filter(p => p.endsWith('.sql')).sort();
   if (!migrationFiles.length) {
@@ -50,4 +57,6 @@ async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_mig
   }
 }
 
-module.exports = {runMigrations};
+module.exports = {
+  runMigrations,
+};

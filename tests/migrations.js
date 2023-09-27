@@ -4,6 +4,14 @@ const {createTestPool, dropTables} = require('./_utils');
 const test = require('ava');
 const path = require('path');
 
+let infoCount = 0;
+const QUIET_COVERAGE = true;
+if (QUIET_COVERAGE) {
+  console.info = function() {
+    ++infoCount;
+  };
+}
+
 const pool = createTestPool();
 
 test.before(async () => {
@@ -15,7 +23,7 @@ test.before(async () => {
 let migrationCount = null;
 
 test.serial('they run', async (t) => {
-  await SQL.runMigrations(pool, path.join(__dirname, 'migrations'), {quiet: true});
+  await SQL.runMigrations(pool, path.join(__dirname, 'migrations'), {quiet: !QUIET_COVERAGE});
 
   const mResp = await pool.query('SELECT count(*) m_count FROM supple_migrations');
   migrationCount = mResp.rows[0].m_count.length;
@@ -26,8 +34,15 @@ test.serial('they run', async (t) => {
 });
 
 test.serial('they don\'t overrun', async (t) => {
-  await SQL.runMigrations(pool, path.join(__dirname, 'migrations'), {quiet: true});
+  await SQL.runMigrations(pool, path.join(__dirname, 'migrations'), {quiet: !QUIET_COVERAGE});
 
   const mResp = await pool.query('SELECT count(*) m_count FROM supple_migrations');
   t.is(mResp.rows[0].m_count.length, migrationCount);
+});
+
+test.serial('no migration files has special handling', async (t) => {
+  const before = infoCount;
+  await SQL.runMigrations(pool, path.join(__dirname), {quiet: !QUIET_COVERAGE});
+
+  t.true(infoCount > before);
 });

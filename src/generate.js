@@ -1,5 +1,4 @@
 'use strict';
-const SQL = require('./index');
 const {parseArgs} = require('./utils/args');
 const {toCamel, toSnake} = require('./utils/case');
 
@@ -35,13 +34,40 @@ WHERE
 ORDER BY ordinal_position
 `;
 
+const regexNumeric = /^[0-9.]+$/;
+const regexReplaceTextWrapper = /^'(.*)'::text$/;
+
+function wrapString(value) {
+  if (typeof value === 'string' || value instanceof String) {
+    return `'${value.replace("'", "\\'")}'`;
+  }
+  return value;
+}
+
+/**
+ * @typedef {Object} GenerateRecordResponse
+ * @memberOf SQL
+ *
+ * @property {string} content - Record file content.
+ * @property {number} filename - Suggested file name.
+ */
+
+/**
+ * Generate a Supple SQL record.
+ * @memberof SQL
+ *
+ * @param {pg.Client|pg.Pool} [connOrPool]
+ * @param {string} tableName
+ * @throws MissingRequiredArgError
+ * @return {GenerateRecordResponse}
+ */
 async function generateRecord(...args) {
   const {connOrPool, args: parsedArgs} = parseArgs(args);
-  const conn = connOrPool || SQL.getDefaultPool();
+  const conn = connOrPool || this.getDefaultPool();
 
   const tableName = parsedArgs[0];
   if (!tableName) {
-    throw new Error('Table name arg is required.');
+    throw new this.MissingRequiredArgError('Table name argument is required.');
   }
   const schemaName = parsedArgs[1] || 'public';
 
@@ -69,7 +95,12 @@ async function generateRecord(...args) {
     if (/^nextval\(/.test(defaultString)) {
       defaultValue = null; // Serial type handling is responsible not defaultValue.
     } else if (defaultString && defaultString !== 'null') {
-      defaultValue = row.column_default;
+      const isNumeric = regexNumeric.test(defaultString);
+      if (isNumeric) {
+        defaultValue = parseFloat(defaultString);
+      } else {
+        defaultValue = row.column_default.replace(regexReplaceTextWrapper, '$1');
+      }
     }
 
     columns.push({
@@ -105,7 +136,7 @@ async function generateRecord(...args) {
       type: `SQL.type.${type}`,
     };
 
-    if (name !== key && name !== toSnake(key)) {
+    if ((name !== key && name !== toSnake(key)) || (name === key && name.toLowerCase() !== name)) {
       field.name = name;
     }
     if (!nullable) {
@@ -132,7 +163,7 @@ async function generateRecord(...args) {
     }
     fieldsString += `    ${key}: {type: ${field.type}`;
     if (field.name) {
-      fieldsString += `, name: ${JSON.stringify(field.name)}`;
+      fieldsString += `, name: ${wrapString(field.name)}`;
     }
     if (field.nullable !== undefined && !field.nullable) {
       fieldsString += `, nullable: ${field.nullable}`;
@@ -140,9 +171,9 @@ async function generateRecord(...args) {
     if (field.defaultValue) {
       fieldsString += `, defaultValue: ${
         field.defaultValue &&
-        `symbol(${field.defaultValue.toLowerCase()})` === String(SQL.valueNow).toLowerCase()
+        `symbol(${String(field.defaultValue).toLowerCase()})` === String(this.valueNow).toLowerCase()
           ? 'SQL.valueNow'
-          : JSON.stringify(field.defaultValue)
+          : wrapString(field.defaultValue)
       }`;
     }
     fieldsString += '}';
@@ -151,8 +182,8 @@ async function generateRecord(...args) {
 
   const content = `class ${className} extends SQL.Record {
   static fields = ${fieldsString};
-  static primaryKeyFields = [${primaryKeyFields.map((s) => JSON.stringify(s)).join(', ')}];
-  static table = ${JSON.stringify(tableName)};
+  static primaryKeyFields = [${primaryKeyFields.map((s) => wrapString(s)).join(', ')}];
+  static table = ${wrapString(tableName)};
 }`;
 
   const filename = `${className}.js`;

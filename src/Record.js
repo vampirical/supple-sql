@@ -1,37 +1,68 @@
 'use strict';
 /* eslint-disable no-console */
-const {connectiveAnd, type, valueNotNull, valueNow} = require('./constants');
+const {connective: connectiveDefs, type, valueNow} = require('./constants');
 const {
   FieldNotFoundError,
   IncorrectFieldsError,
+  InvalidOptionCombinationError,
+  MissingRequiredArgError,
   PrimaryKeyValueMissingError,
   RecordMissingPrimaryKeyError,
 } = require('./errors');
+const RecordQuery = require('./RecordQuery');
 const SqlValue = require('./SqlValue');
-const {ConnectedWheres, Or} = require('./wheres');
-const {processArgs} = require('./utils/args');
-const {toSnake} = require('./utils/case');
+const {parseArgs} = require('./utils/args');
+const {getFieldDbName} = require('./utils/misc');
 const {quoteIdentifier} = require('./utils/sql');
+const {getWhereSql} = require('./wheres');
 const equal = require('fast-deep-equal');
 
-function formatOrderBy(instance, orderBy) {
-  return instance.getFieldDbName(orderBy[0]) + ' ' + orderBy[1].toUpperCase();
-}
-
+/**
+ * @typedef {Object} Record
+ * @memberOf SQL
+ */
 class Record extends Object {
   static fields = {};
   static primaryKeyFields = [];
   static privateFields = []; // Require an extra hoop to extract these values.
   static table = '';
 
+  /**
+   * Find by Primary Key
+   *
+   * Returns null if one and only one matching row isn't found.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} [fields]
+   * @param {...*} [primaryKeyValues]
+   * @returns {Promise<Record.prototype.constructor|null>}
+   */
   static async findByPk(...args) {
     return this.findOne(...args);
   }
 
+  /**
+   * Delete by Primary Key
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} [fields]
+   * @param {...*} [primaryKeyValues]
+   * @returns {boolean}
+   */
   static async deleteByPk(...args) {
     return this.deleteOne(...args);
   }
 
+  /**
+   * Find One
+   *
+   * Returns null if one and only one matching row isn't found.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} [fields]
+   * @param {...*} [primaryKeyValues]
+   * @returns {Promise<Record.prototype.constructor|null>}
+   */
   static async findOne(...args) {
     const type = this.prototype.constructor;
     const instance = new type(...args);
@@ -40,6 +71,14 @@ class Record extends Object {
     return isLoaded ? instance : null;
   }
 
+  /**
+   * Delete by Primary Key
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} [fields]
+   * @param {...*} [primaryKeyValues]
+   * @returns {boolean}
+   */
   static async deleteOne(...args) {
     const type = this.prototype.constructor;
     const instance = new type(...args);
@@ -47,101 +86,122 @@ class Record extends Object {
     return instance.delete();
   }
 
+  /**
+   * Create a query and run it.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object|Array|ConnectedWheres} wheres
+   * @param {Object} [options]
+   * @param {string|Array} [options.orderBy = null]
+   * @param {number} [options.limit = null]
+   * @param {number} [options.offset = null]
+   * @param {outputType} [options.output = null]
+   * @param {string|Array|Set} [options.returns = null]
+   * @param {boolean} [options.stream = false]
+   * @returns {Promise<Array|{stream}>} If options.stream=false then it's a simple array, otherwise it's a stream connected to a database cursor.
+   */
   static async find(...args) {
     const type = this.prototype.constructor;
-    const instance = new type();
-    const processedArgs = processArgs(instance, args);
-    const wheres = processedArgs[0];
-    if (!wheres) {
-      throw new Error(
-        'Where conditions are required as an argument, empty object or array is allowed.'
-      );
-    }
-    const optional = processedArgs[1] ?? {};
-    const {limit = null, offset = null, orderBy = null} = optional;
+    const q = await type.query(...args);
+    await q.run();
 
-    const wherePack = instance.getWherePack(wheres);
-
-    const orderByParts = [];
-    if (orderBy && orderBy.length) {
-      const hasMultiple = Array.isArray(orderBy[0]);
-      if (hasMultiple) {
-        for (const element of orderBy) {
-          orderByParts.push(formatOrderBy(instance, element));
-        }
-      } else {
-        orderByParts.push(formatOrderBy(instance, orderBy));
-      }
-    }
-    const orderByString = orderByParts.length ? 'ORDER BY ' + orderByParts.join(', ') : null;
-
-    let limitString = null;
-    const hasLimit = limit !== null;
-    const hasOffset = offset !== null;
-    if (hasLimit || hasOffset) {
-      const limitParts = [];
-      if (hasLimit) {
-        limitParts.push(`LIMIT ${limit}`);
-      }
-      if (hasOffset) {
-        limitParts.push(`OFFSET ${offset}`);
-      }
-      limitString = limitParts.join(' ');
-    }
-
-    const query = [
-      'SELECT * FROM',
-      quoteIdentifier(type.table),
-      wherePack.sqlString ? 'WHERE' : null,
-      wherePack.sqlString,
-      orderByString,
-      limitString,
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    if (type.debug) {
-      console.debug('FIND', {query, values: wherePack.values});
-    }
-
-    const conn = await instance.getConnection();
-    const dbResponse = await conn.query({
-      text: query,
-      values: wherePack.values,
-      rowMode: 'object',
-    });
-    const rows = dbResponse.rows;
-    if (!instance.conn) {
-      conn.release();
-    }
-
-    return rows.map((row) => {
-      const rowInstance = new type();
-      processArgs(rowInstance, args);
-      rowInstance.loadDbObject(row);
-
-      return rowInstance;
-    });
+    return q.stream ? q : q.rows;
   }
 
+  /**
+   * Create a select query for a set of Records.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object|Array|ConnectedWheres} wheres
+   * @param {Object} [options]
+   * @param {string|Array} [options.orderBy = null]
+   * @param {number} [options.limit = null]
+   * @param {number} [options.offset = null]
+   * @param {outputType} [options.output = null]
+   * @param {string|Array|Set} [options.returns = null]
+   * @param {boolean} [options.stream = false]
+   * @returns {RecordQuery}
+   */
+  static query(...args) {
+    const {connOrPool, args: processedArgs} = parseArgs(args);
+    const type = this.prototype.constructor;
+
+    const recordQueryArgs = [];
+    if (connOrPool) {
+      recordQueryArgs.push(connOrPool);
+    }
+    recordQueryArgs.push(type);
+
+    const instance = new RecordQuery(...recordQueryArgs);
+
+    if (processedArgs.length) {
+      const wheres = processedArgs[0];
+      if (wheres) {
+        instance.where(wheres);
+      }
+
+      const optional = processedArgs[1] ?? {};
+      const {limit = null, offset = null, orderBy = null, ...options} = optional;
+
+      if (limit !== null) {
+        instance.limit(limit);
+      }
+      if (offset !== null) {
+        instance.offset(offset);
+      }
+      if (orderBy) {
+        instance.orderBy(orderBy);
+      }
+      instance.options(options);
+    }
+
+    return instance;
+  }
+
+  /**
+   * Create an instance from an object that uses db field names.
+   * Useful in case you want to write manual queries that return records.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} dbRow
+   * @returns {Promise<Record>}
+   */
   static async newFromDbRow(...args) {
-    // Assumes external callers are generally going to be using the default object row mode.
+    const {connOrPool, args: processedArgs} = parseArgs(args);
+
+    const row = processedArgs.shift();
+    if (!row) {
+      throw new MissingRequiredArgError('Row is required as an argument.');
+    }
+
+    const recordArgs = [];
+    if (connOrPool) {
+      recordArgs.push(connOrPool);
+    }
+    Array.prototype.push.apply(recordArgs, processedArgs);
 
     const type = this.prototype.constructor;
-    const instance = new type();
-
-    const processedArgs = processArgs(instance, args);
-    const row = processedArgs[0];
-    if (!row) {
-      throw new Error('Row is required as an argument.');
-    }
+    const instance = new type(...recordArgs);
 
     instance.loadDbObject(row);
 
     return instance;
   }
 
-  debug = false;
+  static getFieldDefaultValue(key) {
+    const fieldConfig = this.fields[key];
+    if (
+      fieldConfig &&
+      fieldConfig.defaultValue !== undefined &&
+      fieldConfig.defaultValue !== valueNow // Handled by the db.
+    ) {
+      return fieldConfig.defaultValue;
+    }
+
+    return undefined;
+  }
+
+  debug = null;
 
   conn = null;
   pool = null;
@@ -151,9 +211,27 @@ class Record extends Object {
 
   isFieldSet = {};
 
+  /**
+   * Was the data in this instance previously loaded from a db row.
+   *
+   * Can be read directly but should only be changed through setLoaded().
+   * @see setLoaded()
+   *
+   * @type {boolean}
+   */
   isLoaded = false;
   primaryKeyInternalValues = {};
 
+  warnings = null;
+
+  /**
+   * Create a Record instance, with or without initial values.
+   *
+   * @param {pg.Client|pg.Pool} [connOrPool]
+   * @param {Object} [fields]
+   * @param {...*} [primaryKeyValues]
+   * @returns {Object}
+   */
   constructor(...args) {
     super();
 
@@ -161,7 +239,53 @@ class Record extends Object {
       throw new RecordMissingPrimaryKeyError(this.constructor.name);
     }
 
-    const processedArgs = processArgs(this, args);
+    const {conn, pool, args: processedArgs} = parseArgs(args);
+
+    if (conn) {
+      this.setConnection(conn);
+    }
+    if (pool) {
+      this.setPool(pool);
+    }
+
+    const proxied = new Proxy(this, {
+      get(record, prop, receiver) {
+        if (prop === 'recordType') {
+          return record[prop];
+        }
+
+        const hasField = !!record.constructor.fields[prop];
+        if (hasField) {
+          return record.get(prop);
+        }
+        const propType = typeof record[prop];
+        if (propType === 'function') {
+          return record[prop].bind(receiver);
+        } else if (propType !== 'undefined') {
+          return record[prop];
+        }
+        return prop === 'then';
+      },
+      set(record, prop, value, receiver) {
+        if (prop === 'recordType') {
+          record[prop] = value;
+          return true;
+        }
+
+        const hasField = !!record.constructor.fields[prop];
+        if (hasField) {
+          record.set.call(receiver, prop, value);
+          return true;
+        }
+        if (typeof record[prop] !== 'undefined') {
+          record[prop] = value; // eslint-disable-line no-param-reassign
+          return true;
+        }
+        return false;
+      },
+    });
+    proxied.recordType = this.constructor;
+
     if (processedArgs.length) {
       const firstArg = processedArgs[0];
       const isObject = typeof firstArg === 'object' && firstArg !== null;
@@ -177,37 +301,17 @@ class Record extends Object {
       }
 
       for (const [key, value] of Object.entries(fields)) {
-        this.set(key, value);
+        proxied.set(key, value);
       }
     }
 
-    return new Proxy(this, {
-      get(record, prop) {
-        const hasField = !!record.constructor.fields[prop];
-        if (hasField) {
-          return record.get(prop);
-        }
-        const propType = typeof record[prop];
-        if (propType === 'function') {
-          return record[prop].bind(record);
-        } else if (propType !== 'undefined') {
-          return record[prop];
-        }
-        return prop === 'then';
-      },
-      set(record, prop, value) {
-        const hasField = !!record.constructor.fields[prop];
-        if (hasField) {
-          record.set(prop, value);
-          return true;
-        }
-        if (typeof record[prop] !== 'undefined') {
-          record[prop] = value; // eslint-disable-line no-param-reassign
-          return true;
-        }
-        return false;
-      },
-    });
+    // https://github.com/bcoe/c8/issues/290
+    /* c8 ignore next 2 */
+    return proxied;
+  }
+
+  debugging() {
+    return this.debug === null || this.debug === undefined ? require('./index').debug : this.debug;
   }
 
   setConnection(conn, releaseOld = true) {
@@ -229,15 +333,8 @@ class Record extends Object {
   async getConnection() {
     let conn = this.conn;
     if (!conn) {
-      try {
-        conn = await this.pool.connect();
-      } catch (err) {
-        if (conn) {
-          conn.release();
-        }
-
-        throw err;
-      }
+      const pool = this.pool || require('./index').getDefaultPool();
+      conn = await pool.connect();
     }
 
     return conn;
@@ -246,7 +343,7 @@ class Record extends Object {
   isPrimaryKeySet() {
     let set = true;
 
-    for (const key of this.constructor.primaryKeyFields) {
+    for (const key of this.recordType.primaryKeyFields) {
       if (!this.isFieldSet[key]) {
         set = false;
         break;
@@ -270,8 +367,13 @@ class Record extends Object {
     return !equal(current, clean);
   }
 
+  /**
+   * Is the in memory state dirty.
+   *
+   * @returns {boolean}
+   */
   isDirty() {
-    for (const field of Object.keys(this.constructor.fields)) {
+    for (const field of Object.keys(this.recordType.fields)) {
       if (this.isFieldDirty(field)) {
         return true;
       }
@@ -280,13 +382,21 @@ class Record extends Object {
     return false;
   }
 
+  /**
+   * Change whether this instance considers itself previously loaded from the db.
+   *
+   * @see isLoaded
+   *
+   * @param {boolean} isLoaded
+   * @param {boolean} [skipPrimaryKeyCheck=false]
+   */
   setLoaded(isLoaded, skipPrimaryKeyCheck = false) {
     if (isLoaded) {
       if (!skipPrimaryKeyCheck && !this.isPrimaryKeySet()) {
-        throw new PrimaryKeyValueMissingError(this.constructor.name);
+        throw new PrimaryKeyValueMissingError(this.recordType.name);
       }
 
-      for (const fieldKey of this.constructor.primaryKeyFields) {
+      for (const fieldKey of this.recordType.primaryKeyFields) {
         this.primaryKeyInternalValues[fieldKey] = this.get(fieldKey);
       }
 
@@ -299,140 +409,23 @@ class Record extends Object {
   }
 
   getFieldDbName(key) {
-    const fieldConfig = this.constructor.fields[key];
-    if (fieldConfig && fieldConfig.name) {
-      // Explicitly specified.
-
-      return fieldConfig.name;
-    }
-
-    return toSnake(key);
+    return getFieldDbName(this.recordType.fields, key);
   }
 
-  getFieldDefaultValue(key) {
-    const fieldConfig = this.constructor.fields[key];
-    if (
-      fieldConfig &&
-      fieldConfig.defaultValue !== undefined &&
-      fieldConfig.defaultValue !== valueNow // Handled by the db.
-    ) {
-      return fieldConfig.defaultValue;
-    }
-
-    return undefined;
-  }
-
-  getWherePack(wheres, connective = connectiveAnd, bindParamsUsed = 0) {
-    // Grouped handling
-    const isConnectedWheres = wheres instanceof ConnectedWheres;
-    const isWhereGroup = isConnectedWheres || Array.isArray(wheres);
-    if (isWhereGroup) {
-      let connectedWheres = wheres;
-      let groupConnective = connective;
-      if (isConnectedWheres) {
-        const child = wheres.wheres;
-        const isChildWhereGroup = child instanceof ConnectedWheres || Array.isArray(child);
-        connectedWheres = isChildWhereGroup ? child : [child];
-        groupConnective = wheres.connective;
-      }
-
-      const groupConnectiveSql = [' ', groupConnective.description, ' '].join('');
-
-      let sqlString = '';
-      const values = [];
-      for (const where of connectedWheres) {
-        const currentPack = this.getWherePack(where, undefined, bindParamsUsed + values.length);
-
-        if (sqlString !== '') {
-          sqlString += groupConnectiveSql;
-        }
-        sqlString += currentPack.sqlString;
-
-        Array.prototype.push.apply(values, currentPack.values);
-      }
-
-      return {sqlString, values};
-    }
-
-    // We now know that these represent simple fields.
-    const fields = typeof wheres.entries === 'function' ? wheres.entries() : Object.entries(wheres);
-
-    let sqlString = '';
-    const values = [];
-
-    const connectiveSql = [' ', connective.description, ' '].join('');
-
-    for (const [key, value] of fields) {
-      if (!this.constructor.fields[key]) {
-        throw new FieldNotFoundError(key, this.constructor.name);
-      }
-
-      let sqlLhs = quoteIdentifier(this.getFieldDbName(key));
-
-      let sqlComparison;
-      if (value === true) {
-        sqlComparison = '= TRUE';
-      } else if (value === false) {
-        sqlComparison = '= FALSE';
-      } else if (value === null) {
-        sqlComparison = 'IS NULL';
-      } else if (value === valueNotNull) {
-        sqlComparison = 'IS NOT NULL';
-      } else if (value === valueNow) {
-        sqlComparison = '= ' + valueNow.description;
-      } else if (value instanceof SqlValue) {
-        const actualValue = value.getValue();
-        if (value.bind) {
-          sqlComparison = '= $' + bindParamsUsed + values.length + 1;
-          values.push(actualValue);
-        } else {
-          sqlComparison = '= ' + actualValue;
-        }
-      } else if (value instanceof Or) {
-        const orPack = this.getWherePack(value, undefined, bindParamsUsed + values.length);
-
-        if (sqlString !== '') {
-          sqlString += connectiveSql;
-        }
-        sqlString += orPack.sqlString;
-
-        Array.prototype.push.apply(values, orPack.values);
-
-        continue;
-      } else if (Array.isArray(value) || value instanceof Set) {
-        const array = value instanceof Set ? Array.from(value) : value;
-
-        if (array.length) {
-          sqlComparison =
-            'IN (' +
-            Array.from(Array(array.length))
-              .map((_, i) => '$' + (bindParamsUsed + values.length + 1 + i))
-              .join(', ') +
-            ')';
-          Array.prototype.push.apply(values, array);
-        } else {
-          // Explicitly don't match any rows when dealing with an empty array instead of erroring on the empty IN.
-          sqlLhs = 'true';
-          sqlComparison = '= false';
-        }
-      } else {
-        sqlComparison = '= $' + (bindParamsUsed + values.length + 1);
-        values.push(value);
-      }
-
-      if (sqlString !== '') {
-        sqlString += connectiveSql;
-      }
-      sqlString += sqlLhs + ' ' + sqlComparison;
-    }
-
-    return {sqlString, values};
+  getWhereSql(conn, wheres, {connective = connectiveDefs.and, bindParamsUsed = 0} = {}) {
+    return getWhereSql(
+      conn,
+      this.recordType.name,
+      this.recordType.fields,
+      wheres,
+      {connective, bindParamsUsed}
+    );
   }
 
   getPrimaryKeyValues(useInternalValues = false) {
     const values = new Map();
 
-    for (const primaryKeyField of this.constructor.primaryKeyFields) {
+    for (const primaryKeyField of this.recordType.primaryKeyFields) {
       values.set(
         primaryKeyField,
         (useInternalValues
@@ -444,18 +437,14 @@ class Record extends Object {
     return values;
   }
 
-  getPrimaryKeyWherePack(useInternalValues = false, bindParamsUsed = 0) {
-    return this.getWherePack(
-      this.getPrimaryKeyValues(useInternalValues),
-      connectiveAnd,
-      bindParamsUsed
-    );
+  getPrimaryKeyWherePack(conn, useInternalValues = false, bindParamsUsed = 0) {
+    return this.getWhereSql(conn, this.getPrimaryKeyValues(useInternalValues), {bindParamsUsed});
   }
 
   getFieldsSql() {
     const res = [];
 
-    for (const [key, fieldConfig] of Object.entries(this.constructor.fields)) {
+    for (const [key, fieldConfig] of Object.entries(this.recordType.fields)) {
       let val = this.getFieldDbName(key);
 
       if (fieldConfig.type === type.interval) {
@@ -470,17 +459,29 @@ class Record extends Object {
     return res.join(', ');
   }
 
+  /**
+   * Get the current value for a field. Outside the instance this is proxied as vanilla object property access.
+   *
+   * @param {string} key - As defined in fields.
+   * @returns {*}
+   */
   get(key) {
-    if (!this.constructor.fields[key]) {
-      throw new FieldNotFoundError(key, this.constructor.name);
+    if (!this.recordType.fields[key]) {
+      throw new FieldNotFoundError(key, this.recordType.name);
     }
 
     return this.values[key];
   }
 
+  /**
+   * Set the current value for a field. Outside the instance this is proxied as vanilla object property access.
+   *
+   * @param {string} key - As defined in fields.
+   * @param {*} value
+   */
   set(key, value) {
-    if (!this.constructor.fields[key]) {
-      throw new FieldNotFoundError(key, this.constructor.name);
+    if (!this.recordType.fields[key]) {
+      throw new FieldNotFoundError(key, this.recordType.name);
     }
 
     this.values[key] = value;
@@ -488,7 +489,7 @@ class Record extends Object {
   }
 
   loadDbArray(array) {
-    const indexToKey = Object.keys(this.constructor.fields);
+    const indexToKey = Object.keys(this.recordType.fields);
     for (const [index, value] of array.entries()) {
       const key = indexToKey[index];
       this.set(key, value);
@@ -498,7 +499,7 @@ class Record extends Object {
   }
 
   loadDbObject(dbRow) {
-    for (const key of Object.keys(this.constructor.fields)) {
+    for (const key of Object.keys(this.recordType.fields)) {
       const fieldDbName = this.getFieldDbName(key);
 
       const value = dbRow[fieldDbName];
@@ -510,8 +511,18 @@ class Record extends Object {
     this.setLoaded(true);
   }
 
+  /**
+   * Attempt to load db values into the instance.
+   * If no field values are passed then the current field values are used to load from the db.
+   * Field values are only modified, regardless of whether fields are passed, only if exactly 1 db row is matched.
+   *
+   * If 2 rows are matched a warning will be logged and populated into this.warnings.
+   *
+   * @param {Object} [fields]
+   * @returns {Promise<boolean>}
+   */
   async load(fields = null) {
-    // Try to load from set fields, if we don't get 1 and only one result return true, otherwise return false.
+    // Try to load from set fields, if we get 1 and only one result return true, otherwise return false.
 
     let defaultedFields = fields;
     if (!fields) {
@@ -528,41 +539,43 @@ class Record extends Object {
     }
 
     const selectFieldsSql = this.getFieldsSql();
-    const wherePack = this.getWherePack(defaultedFields);
 
-    const loadQuery = [
-      'SELECT',
-      selectFieldsSql,
-      'FROM',
-      quoteIdentifier(this.constructor.table),
-      'WHERE',
-      wherePack.sqlString,
-      'LIMIT 2',
-    ].join(' ');
-
+    let dbResponse;
     const conn = await this.getConnection();
-    if (this.debug) {
-      console.debug('LOAD', {loadQuery, loadValues: wherePack.values});
+    try {
+      const whereSql = this.getWhereSql(conn, defaultedFields);
+
+      const loadQuery = [
+        'SELECT',
+        selectFieldsSql,
+        'FROM',
+        quoteIdentifier(this.recordType.table),
+        'WHERE',
+        whereSql.query,
+        'LIMIT 2',
+      ].join(' ');
+
+      if (this.debugging()) {
+        console.debug('LOAD', {loadQuery, loadValues: whereSql.values});
+      }
+
+      dbResponse = await conn.query({
+        text: loadQuery,
+        values: whereSql.values,
+        rowMode: 'array',
+      });
+    } finally {
+      if (!this.conn) {
+        conn.release();
+      }
     }
-    const dbResponse = await conn.query({
-      text: loadQuery,
-      values: wherePack.values,
-      rowMode: 'array',
-    });
+
     const rows = dbResponse.rows;
-    if (!this.conn) {
-      conn.release();
-    }
 
     let result = false;
     switch (rows.length) {
-      default:
       case 0:
         // Nothing found
-        break;
-
-      case 2:
-        console.warn('Multiple results matched load() attempt.');
         break;
 
       case 1:
@@ -570,40 +583,62 @@ class Record extends Object {
 
         result = true;
         break;
+
+      case 2: {
+        const warning = 'Multiple results matched load() attempt.';
+        if (!this.warnings) {
+          this.warnings = [];
+        }
+        this.warnings.push(warning);
+        console.warn(warning);
+        break;
+      }
     }
 
     return result;
   }
 
+  /**
+   * Delete the db row.
+   * The instance keeps its data but is no longer considered loaded.
+   *
+   * @returns {Promise<boolean>}
+   */
   async delete() {
     for (const value of this.getPrimaryKeyValues().values()) {
       if (value === undefined || value === null) {
-        throw new PrimaryKeyValueMissingError(this.constructor.name);
+        throw new PrimaryKeyValueMissingError(this.recordType.name);
       }
     }
 
-    const primaryKeyWherePack = this.getPrimaryKeyWherePack();
-
-    const deleteQuery = [
-      'DELETE FROM',
-      quoteIdentifier(this.constructor.table),
-      'WHERE',
-      primaryKeyWherePack.sqlString,
-    ].join(' ');
-
-    if (this.debug) {
-      console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWherePack.values});
-    }
     const conn = await this.getConnection();
-    const dbResponse = await conn.query({
-      text: deleteQuery,
-      values: primaryKeyWherePack.values,
-      rowMode: 'array',
-    });
-    const wasDeleted = dbResponse.rowCount === 1;
-    if (!this.conn) {
-      conn.release();
+    let dbResponse;
+    try {
+      const primaryKeyWhereSql = this.getPrimaryKeyWherePack(conn);
+
+      const deleteQuery = [
+        'DELETE FROM',
+        quoteIdentifier(this.recordType.table),
+        'WHERE',
+        primaryKeyWhereSql.query,
+      ].join(' ');
+
+      if (this.debugging()) {
+        console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWhereSql.values});
+      }
+
+      dbResponse = await conn.query({
+        text: deleteQuery,
+        values: primaryKeyWhereSql.values,
+        rowMode: 'array',
+      });
+    } finally {
+      if (!this.conn) {
+        conn.release();
+      }
     }
+
+    const wasDeleted = dbResponse.rowCount === 1;
 
     if (wasDeleted) {
       this.setLoaded(false);
@@ -620,12 +655,9 @@ class Record extends Object {
       let string;
       let bind = true;
       let bindValue;
-      if (value === valueNow) {
+      if (typeof value === 'symbol') {
         string = valueNow.description;
         bind = false;
-      } else if (value instanceof SqlValue) {
-        string = value.getValue();
-        bind = value.bind;
       } else {
         string = '$' + ++bindParamNum;
         bindValue = value;
@@ -642,7 +674,19 @@ class Record extends Object {
     return result;
   }
 
+  /**
+   * Save the current in memory state to the database.
+   * If isLoaded, this will be an insert, otherwise it will be an update.
+   *
+   * @param {boolean} [skipReload=false] - Skip reloading the new state from the db, a slight efficiency gain if you know you won't use the values or for use with ignoreConflict.
+   * @param {boolean} [ignoreConflict=false] - Ignore conflicts during insert/update, requires skipReload=true.
+   * @returns {Promise<boolean>}
+   */
   async save(skipReload = false, ignoreConflict = false) {
+    if (ignoreConflict && !skipReload) {
+      throw new InvalidOptionCombinationError('The ignoreConflict option requires skipReload since it is possible no row will be changed.');
+    }
+
     if (this.isLoaded) {
       const setStrings = [];
       const setValues = [];
@@ -658,32 +702,37 @@ class Record extends Object {
       }
       const setString = setStrings.join(', ');
 
-      const primaryKeyWherePack = this.getPrimaryKeyWherePack(true, setValues.length);
-
-      let updateQuery = [
-        'UPDATE',
-        quoteIdentifier(this.constructor.table),
-        'SET',
-        setString,
-        'WHERE',
-        primaryKeyWherePack.sqlString,
-      ].join(' ');
-      if (!skipReload) {
-        updateQuery += ' RETURNING ' + this.getFieldsSql();
-      }
-      const updateValues = [...setValues, ...primaryKeyWherePack.values];
-
-      if (this.debug) {
-        console.debug('UPDATE', {updateQuery, updateValues});
-      }
       const conn = await this.getConnection();
-      const dbResponse = await conn.query({
-        text: updateQuery,
-        values: updateValues,
-        rowMode: 'array',
-      });
-      if (!this.conn) {
-        conn.release();
+      let dbResponse;
+      try {
+        const primaryKeyWhereSql = this.getPrimaryKeyWherePack(conn, true, setValues.length);
+
+        let updateQuery = [
+          'UPDATE',
+          quoteIdentifier(this.recordType.table),
+          'SET',
+          setString,
+          'WHERE',
+          primaryKeyWhereSql.query,
+        ].join(' ');
+        if (!skipReload) {
+          updateQuery += ' RETURNING ' + this.getFieldsSql();
+        }
+        const updateValues = [...setValues, ...primaryKeyWhereSql.values];
+
+        if (this.debugging()) {
+          console.debug('UPDATE', {updateQuery, updateValues});
+        }
+
+        dbResponse = await conn.query({
+          text: updateQuery,
+          values: updateValues,
+          rowMode: 'array',
+        });
+      } finally {
+        if (!this.conn) {
+          conn.release();
+        }
       }
 
       if (!skipReload) {
@@ -719,22 +768,20 @@ class Record extends Object {
           insertValues.push(sqlField.bindValue);
         }
       }
-      if (!insertFields) {
-        return false; // Nothing to insert.
-      }
 
-      const valuesString = insertValues.length
-        ? 'VALUES (' + insertValueStrings.join(', ') + ')'
-        : 'DEFAULT VALUES';
+      let columnsString = null;
+      let valuesString = 'DEFAULT VALUES';
+      if (insertValues.length) {
+        columnsString = `(${insertFields.join(', ')})`;
+        valuesString = `VALUES (${insertValueStrings.join(', ')})`;
+      }
 
       let insertQuery = [
         'INSERT INTO',
-        quoteIdentifier(this.constructor.table),
-        '(',
-        insertFields.join(', '),
-        ')',
+        quoteIdentifier(this.recordType.table),
+        columnsString,
         valuesString,
-      ].join(' ');
+      ].filter(Boolean).join(' ');
       if (ignoreConflict) {
         insertQuery += ' ON CONFLICT DO NOTHING';
       }
@@ -742,7 +789,7 @@ class Record extends Object {
         insertQuery += ' RETURNING ' + this.getFieldsSql();
       }
 
-      if (this.debug) {
+      if (this.debugging()) {
         console.debug('INSERT', {insertQuery, insertValues});
       }
       const conn = await this.getConnection();
@@ -764,10 +811,22 @@ class Record extends Object {
   }
 
   restore(fields) {
-    Object.assign(this, fields);
+    for (const [key, value] of Object.entries(fields)) {
+      this.set(key, value);
+    }
     this.setLoaded(true, true);
   }
 
+  /**
+   * Get a vanilla Javascript object with the record's data.
+   *
+   * @param {Object} [fields]
+   * @param {boolean} [includeDefaults=false]
+   * @param {boolean} [includePrivate=false]
+   * @param {boolean} [onlyDirty=false]
+   * @param {boolean} [onlySet=false]
+   * @returns {Object}
+   */
   data({
     fields = null,
     includeDefaults = false,
@@ -776,8 +835,8 @@ class Record extends Object {
     onlySet = false,
   } = {}) {
     const object = {};
-    for (const field of fields || Object.keys(this.constructor.fields)) {
-      const defaultValue = this.getFieldDefaultValue(field);
+    for (const field of fields || Object.keys(this.recordType.fields)) {
+      const defaultValue = this.recordType.getFieldDefaultValue(field);
       const hasDefault = includeDefaults && defaultValue !== undefined && defaultValue !== null;
 
       if (onlyDirty && !this.isFieldDirty(field) && !hasDefault) {
@@ -791,11 +850,14 @@ class Record extends Object {
       if (value === undefined && hasDefault) {
         value = defaultValue;
       }
+      if (value instanceof SqlValue) {
+        value = value.value;
+      }
       object[field] = value;
     }
 
     if (!includePrivate) {
-      for (const privateField of this.constructor.privateFields) {
+      for (const privateField of this.recordType.privateFields) {
         delete object[privateField];
       }
     }

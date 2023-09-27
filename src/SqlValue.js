@@ -1,18 +1,32 @@
 'use strict';
 const {quoteLiteral} = require('./utils/sql');
 
+/**
+ * @typedef {Object} SqlValue
+ * @memberOf SQL
+ */
 class SqlValue extends Object {
   value;
 
   bind;
+  comparison;
   quote;
 
-  constructor(value, {bind = false, quote = false} = {}) {
+  /**
+   * Create a SqlValue that species how a value should be used within queries.
+   *
+   * @param {*} value
+   * @param bind
+   * @param comparison
+   * @param quote
+   */
+  constructor(value, {bind = false, comparison = null, quote = false} = {}) {
     super();
 
     this.value = value;
 
     this.bind = bind;
+    this.comparison = comparison;
     this.quote = quote;
   }
 

@@ -1,12 +1,18 @@
 {
   "name": "supple-sql",
-  "version": "0.0.10",
-  "main": "src/index.js",
-  "exports": {
-    ".": "./src/index.js",
-    "./generate": "./src/generate.js"
+  "version": "0.0.11",
+  "engines": {
+    "node": ">=16.3.0"
   },
-  "scripts": {},
+  "main": "src/index.js",
+  "scripts": {
+    "docs": "rm -rf docs/* ; jsdoc --configure jsdoc.json --verbose && mv docs/supple-sql/*/* docs/ && rm -rf docs/supple-sql",
+    "lint": "eslint --ignore-pattern 'docs/' .",
+    "prepublishOnly": "npm run docs",
+    "test": "c8 --src ./src --all --clean --reporter=text --reporter=json ava ./tests/**/*.js",
+    "test:setup-db": "dropdb -h 127.0.0.1 test ; createdb -h 127.0.0.1 test",
+    "validate": "npm run lint && npm run test"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vampirical/supple-sql.git"
@@ -15,6 +21,18 @@
     "fast-deep-equal": "^3.1.3",
     "pg": "^8.11.1",
     "pg-format": "^1.0.4",
-    "pg-protocol": "^1.6.0"
+    "pg-protocol": "^1.6.0",
+    "pg-query-stream": "^4.5.1"
+  },
+  "devDependencies": {
+    "ava": "^5.3.1",
+    "c8": "^8.0.1",
+    "clean-jsdoc-theme": "^4.2.17",
+    "eslint": "^8.57.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-promise": "^6.1.1",
+    "jsdoc": "^4.0.2"
   }
 }

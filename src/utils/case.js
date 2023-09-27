@@ -1,7 +1,7 @@
 'use strict';
 
 function toCamel(s) {
-  return s.replace(/[ -_]([a-zA-Z])/g, (match, $1) => {
+  return s.replace(/[-_ ]([a-zA-Z])/g, (match, $1) => {
     return $1.toUpperCase();
   });
 }

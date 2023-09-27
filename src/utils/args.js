@@ -1,4 +1,3 @@
-'use strict';
 const pg = require('pg');
 
 function parseArgs(origArgs) {
@@ -25,22 +24,6 @@ function parseArgs(origArgs) {
   return result;
 }
 
-function processArgs(connReceiver, origArgs) {
-  const parsed = parseArgs(origArgs);
-
-  if (parsed.conn) {
-    connReceiver.setConnection(parsed.conn);
-  } else if (parsed.pool) {
-    connReceiver.setPool(parsed.pool);
-  }
-  if (!connReceiver.conn && !connReceiver.pool) {
-    connReceiver.setPool(require('../index').getDefaultPool());
-  }
-
-  return parsed.args;
-}
-
 module.exports = {
   parseArgs,
-  processArgs,
 };
