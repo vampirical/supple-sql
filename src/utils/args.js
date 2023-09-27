@@ -32,8 +32,7 @@ function processArgs(connReceiver, origArgs) {
     connReceiver.setConnection(parsed.conn);
   } else if (parsed.pool) {
     connReceiver.setPool(parsed.pool);
-  }
-  if (!connReceiver.conn && !connReceiver.pool) {
+  } else if (!connReceiver.conn && !connReceiver.pool) {
     connReceiver.setPool(require('../index').getDefaultPool());
   }
 

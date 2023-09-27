@@ -5,14 +5,16 @@ class SqlValue extends Object {
   value;
 
   bind;
+  comparison;
   quote;
 
-  constructor(value, {bind = false, quote = false} = {}) {
+  constructor(value, {bind = false, comparison = null, quote = false} = {}) {
     super();
 
     this.value = value;
 
     this.bind = bind;
+    this.comparison = comparison;
     this.quote = quote;
   }
 

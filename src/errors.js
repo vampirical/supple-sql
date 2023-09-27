@@ -1,7 +1,7 @@
 'use strict';
 
-class CallbackRequiredError extends Error {
-  constructor(message) {
+class AsyncIterationUnavailableError extends Error {
+  constructor(message = 'Set the stream option to enable async iteration') {
     super(message);
     this.name = this.constructor.name;
   }
@@ -9,7 +9,7 @@ class CallbackRequiredError extends Error {
 
 class FieldNotFoundError extends Error {
   constructor(fieldName, recordName) {
-    super(`Cannot get field ${fieldName} on ${recordName}, does not exist.`);
+    super(`Field ${fieldName} does not exist on ${recordName}.`);
     this.name = this.constructor.name;
   }
 }
@@ -21,9 +21,23 @@ class ImplicitNestedTransactionError extends Error {
   }
 }
 
+class IncompatibleOutputSpecifiedError extends Error {
+  constructor(message = 'Incompatible output specified') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 class IncorrectFieldsError extends Error {
   constructor(message) {
     super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class InvalidOutputTypeError extends Error {
+  constructor(type) {
+    super(`Invalid output type: ${type}`);
     this.name = this.constructor.name;
   }
 }
@@ -37,7 +51,14 @@ class NoPoolSetError extends Error {
 
 class PrimaryKeyValueMissingError extends Error {
   constructor(recordName) {
-    super(`Unable to set ${recordName} as loaded, one or more primary key fields are not set.`);
+    super(`Unable to treat ${recordName} as loaded, one or more primary key fields are not set.`);
+    this.name = this.constructor.name;
+  }
+}
+
+class QueryNotLoadedIterationError extends Error {
+  constructor(message = 'Query is not synchronously iterable unless isLoaded=true.') {
+    super(message);
     this.name = this.constructor.name;
   }
 }
@@ -49,6 +70,13 @@ class RecordMissingPrimaryKeyError extends Error {
   }
 }
 
+class RecordTypeRequiredError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 class StatementTimeoutError extends Error {
   constructor() {
     super('Statement timeout.');
@@ -56,13 +84,57 @@ class StatementTimeoutError extends Error {
   }
 }
 
+class UnavailableInStreamModeError extends Error {
+  constructor(message = 'Unavailable in stream mode') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class AutoPrunedUnusablePoolConnectionError extends Error {
+  constructor(message = 'Auto pruned pool unusable connection') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class FailedToFindUsablePoolConnectionError extends Error {
+  constructor(message = 'Failed to find a usable pool connection.') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class MissingRequiredArgError extends Error {
+  constructor() {
+    super('Missing required argument.');
+    this.name = this.constructor.name;
+  }
+}
+
+class InvalidOptionCombinationError extends Error {
+  constructor(message = 'Invalid option combination.') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 module.exports = {
-  CallbackRequiredError,
+  AutoPrunedUnusablePoolConnectionError,
+  AsyncIterationUnavailableError,
+  FailedToFindUsablePoolConnectionError,
   FieldNotFoundError,
   ImplicitNestedTransactionError,
+  IncompatibleOutputSpecifiedError,
   IncorrectFieldsError,
+  InvalidOptionCombinationError,
+  InvalidOutputTypeError,
+  MissingRequiredArgError,
   NoPoolSetError,
   PrimaryKeyValueMissingError,
   RecordMissingPrimaryKeyError,
+  RecordTypeRequiredError,
+  QueryNotLoadedIterationError,
   StatementTimeoutError,
+  UnavailableInStreamModeError,
 };

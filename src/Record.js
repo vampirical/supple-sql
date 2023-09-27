@@ -1,22 +1,21 @@
 'use strict';
 /* eslint-disable no-console */
-const {connectiveAnd, type, valueNotNull, valueNow} = require('./constants');
+const {connective: connectiveDefs, type, valueNow} = require('./constants');
 const {
   FieldNotFoundError,
   IncorrectFieldsError,
+  InvalidOptionCombinationError,
+  MissingRequiredArgError,
   PrimaryKeyValueMissingError,
   RecordMissingPrimaryKeyError,
 } = require('./errors');
+const RecordQuery = require('./RecordQuery');
 const SqlValue = require('./SqlValue');
-const {ConnectedWheres, Or} = require('./wheres');
-const {processArgs} = require('./utils/args');
-const {toSnake} = require('./utils/case');
+const {parseArgs, processArgs} = require('./utils/args');
+const {getFieldDbName} = require('./utils/misc');
 const {quoteIdentifier} = require('./utils/sql');
+const {getWhereSql} = require('./wheres');
 const equal = require('fast-deep-equal');
-
-function formatOrderBy(instance, orderBy) {
-  return instance.getFieldDbName(orderBy[0]) + ' ' + orderBy[1].toUpperCase();
-}
 
 class Record extends Object {
   static fields = {};
@@ -49,99 +48,88 @@ class Record extends Object {
 
   static async find(...args) {
     const type = this.prototype.constructor;
-    const instance = new type();
-    const processedArgs = processArgs(instance, args);
-    const wheres = processedArgs[0];
-    if (!wheres) {
-      throw new Error(
-        'Where conditions are required as an argument, empty object or array is allowed.'
-      );
+    const q = await type.query(...args);
+    await q.run();
+    if (q.stream) {
+      return q;
     }
-    const optional = processedArgs[1] ?? {};
-    const {limit = null, offset = null, orderBy = null} = optional;
+    return q.rows;
+  }
 
-    const wherePack = instance.getWherePack(wheres);
+  static query(...args) {
+    const {connOrPool, args: processedArgs} = parseArgs(args);
+    const type = this.prototype.constructor;
 
-    const orderByParts = [];
-    if (orderBy && orderBy.length) {
-      const hasMultiple = Array.isArray(orderBy[0]);
-      if (hasMultiple) {
-        for (const element of orderBy) {
-          orderByParts.push(formatOrderBy(instance, element));
-        }
-      } else {
-        orderByParts.push(formatOrderBy(instance, orderBy));
+    const recordQueryArgs = [];
+    if (connOrPool) {
+      recordQueryArgs.push(connOrPool);
+    }
+    recordQueryArgs.push(type);
+
+    const instance = new RecordQuery(...recordQueryArgs);
+
+    if (processedArgs.length) {
+      const wheres = processedArgs[0];
+      if (wheres) {
+        instance.where(wheres);
       }
-    }
-    const orderByString = orderByParts.length ? 'ORDER BY ' + orderByParts.join(', ') : null;
 
-    let limitString = null;
-    const hasLimit = limit !== null;
-    const hasOffset = offset !== null;
-    if (hasLimit || hasOffset) {
-      const limitParts = [];
-      if (hasLimit) {
-        limitParts.push(`LIMIT ${limit}`);
+      const optional = processedArgs[1] ?? {};
+      const {limit = null, offset = null, orderBy = null, ...options} = optional;
+
+      if (limit !== null) {
+        instance.limit(limit);
       }
-      if (hasOffset) {
-        limitParts.push(`OFFSET ${offset}`);
+      if (offset !== null) {
+        instance.offset(offset);
       }
-      limitString = limitParts.join(' ');
+      if (orderBy) {
+        instance.orderBy(orderBy);
+      }
+      instance.options(options);
     }
 
-    const query = [
-      'SELECT * FROM',
-      quoteIdentifier(type.table),
-      wherePack.sqlString ? 'WHERE' : null,
-      wherePack.sqlString,
-      orderByString,
-      limitString,
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    if (type.debug) {
-      console.debug('FIND', {query, values: wherePack.values});
-    }
-
-    const conn = await instance.getConnection();
-    const dbResponse = await conn.query({
-      text: query,
-      values: wherePack.values,
-      rowMode: 'object',
-    });
-    const rows = dbResponse.rows;
-    if (!instance.conn) {
-      conn.release();
-    }
-
-    return rows.map((row) => {
-      const rowInstance = new type();
-      processArgs(rowInstance, args);
-      rowInstance.loadDbObject(row);
-
-      return rowInstance;
-    });
+    return instance;
   }
 
   static async newFromDbRow(...args) {
     // Assumes external callers are generally going to be using the default object row mode.
 
-    const type = this.prototype.constructor;
-    const instance = new type();
+    const {connOrPool, args: processedArgs} = parseArgs(args);
 
-    const processedArgs = processArgs(instance, args);
     const row = processedArgs[0];
     if (!row) {
-      throw new Error('Row is required as an argument.');
+      throw new MissingRequiredArgError('Row is required as an argument.');
     }
+
+    const recordArgs = [];
+    if (connOrPool) {
+      recordArgs.push(connOrPool);
+    }
+    Array.prototype.push.apply(recordArgs, processedArgs);
+
+    const type = this.prototype.constructor;
+    const instance = new type(...recordArgs);
 
     instance.loadDbObject(row);
 
     return instance;
   }
 
-  debug = false;
+  static getFieldDefaultValue(key) {
+    const fieldConfig = this.fields[key];
+    if (
+      fieldConfig &&
+      fieldConfig.defaultValue !== undefined &&
+      fieldConfig.defaultValue !== valueNow // Handled by the db.
+    ) {
+      return fieldConfig.defaultValue;
+    }
+
+    return undefined;
+  }
+
+  debug = null;
 
   conn = null;
   pool = null;
@@ -153,6 +141,8 @@ class Record extends Object {
 
   isLoaded = false;
   primaryKeyInternalValues = {};
+
+  warnings = null;
 
   constructor(...args) {
     super();
@@ -181,7 +171,7 @@ class Record extends Object {
       }
     }
 
-    return new Proxy(this, {
+    const proxied = new Proxy(this, {
       get(record, prop) {
         const hasField = !!record.constructor.fields[prop];
         if (hasField) {
@@ -208,6 +198,14 @@ class Record extends Object {
         return false;
       },
     });
+
+    // https://github.com/bcoe/c8/issues/290
+    /* c8 ignore next 2 */
+    return proxied;
+  }
+
+  debugging() {
+    return this.debug === null || this.debug === undefined ? require('./index').debug : this.debug;
   }
 
   setConnection(conn, releaseOld = true) {
@@ -229,15 +227,7 @@ class Record extends Object {
   async getConnection() {
     let conn = this.conn;
     if (!conn) {
-      try {
-        conn = await this.pool.connect();
-      } catch (err) {
-        if (conn) {
-          conn.release();
-        }
-
-        throw err;
-      }
+      conn = await this.pool.connect();
     }
 
     return conn;
@@ -299,134 +289,16 @@ class Record extends Object {
   }
 
   getFieldDbName(key) {
-    const fieldConfig = this.constructor.fields[key];
-    if (fieldConfig && fieldConfig.name) {
-      // Explicitly specified.
-
-      return fieldConfig.name;
-    }
-
-    return toSnake(key);
+    return getFieldDbName(this.constructor.fields, key);
   }
 
-  getFieldDefaultValue(key) {
-    const fieldConfig = this.constructor.fields[key];
-    if (
-      fieldConfig &&
-      fieldConfig.defaultValue !== undefined &&
-      fieldConfig.defaultValue !== valueNow // Handled by the db.
-    ) {
-      return fieldConfig.defaultValue;
-    }
-
-    return undefined;
-  }
-
-  getWherePack(wheres, connective = connectiveAnd, bindParamsUsed = 0) {
-    // Grouped handling
-    const isConnectedWheres = wheres instanceof ConnectedWheres;
-    const isWhereGroup = isConnectedWheres || Array.isArray(wheres);
-    if (isWhereGroup) {
-      let connectedWheres = wheres;
-      let groupConnective = connective;
-      if (isConnectedWheres) {
-        const child = wheres.wheres;
-        const isChildWhereGroup = child instanceof ConnectedWheres || Array.isArray(child);
-        connectedWheres = isChildWhereGroup ? child : [child];
-        groupConnective = wheres.connective;
-      }
-
-      const groupConnectiveSql = [' ', groupConnective.description, ' '].join('');
-
-      let sqlString = '';
-      const values = [];
-      for (const where of connectedWheres) {
-        const currentPack = this.getWherePack(where, undefined, bindParamsUsed + values.length);
-
-        if (sqlString !== '') {
-          sqlString += groupConnectiveSql;
-        }
-        sqlString += currentPack.sqlString;
-
-        Array.prototype.push.apply(values, currentPack.values);
-      }
-
-      return {sqlString, values};
-    }
-
-    // We now know that these represent simple fields.
-    const fields = typeof wheres.entries === 'function' ? wheres.entries() : Object.entries(wheres);
-
-    let sqlString = '';
-    const values = [];
-
-    const connectiveSql = [' ', connective.description, ' '].join('');
-
-    for (const [key, value] of fields) {
-      if (!this.constructor.fields[key]) {
-        throw new FieldNotFoundError(key, this.constructor.name);
-      }
-
-      let sqlLhs = quoteIdentifier(this.getFieldDbName(key));
-
-      let sqlComparison;
-      if (value === true) {
-        sqlComparison = '= TRUE';
-      } else if (value === false) {
-        sqlComparison = '= FALSE';
-      } else if (value === null) {
-        sqlComparison = 'IS NULL';
-      } else if (value === valueNotNull) {
-        sqlComparison = 'IS NOT NULL';
-      } else if (value === valueNow) {
-        sqlComparison = '= ' + valueNow.description;
-      } else if (value instanceof SqlValue) {
-        const actualValue = value.getValue();
-        if (value.bind) {
-          sqlComparison = '= $' + bindParamsUsed + values.length + 1;
-          values.push(actualValue);
-        } else {
-          sqlComparison = '= ' + actualValue;
-        }
-      } else if (value instanceof Or) {
-        const orPack = this.getWherePack(value, undefined, bindParamsUsed + values.length);
-
-        if (sqlString !== '') {
-          sqlString += connectiveSql;
-        }
-        sqlString += orPack.sqlString;
-
-        Array.prototype.push.apply(values, orPack.values);
-
-        continue;
-      } else if (Array.isArray(value) || value instanceof Set) {
-        const array = value instanceof Set ? Array.from(value) : value;
-
-        if (array.length) {
-          sqlComparison =
-            'IN (' +
-            Array.from(Array(array.length))
-              .map((_, i) => '$' + (bindParamsUsed + values.length + 1 + i))
-              .join(', ') +
-            ')';
-          Array.prototype.push.apply(values, array);
-        } else {
-          // Explicitly don't match any rows when dealing with an empty array instead of erroring on the empty IN.
-          sqlLhs = 'true';
-          sqlComparison = '= false';
-        }
-      } else {
-        sqlComparison = '= $' + (bindParamsUsed + values.length + 1);
-        values.push(value);
-      }
-
-      if (sqlString !== '') {
-        sqlString += connectiveSql;
-      }
-      sqlString += sqlLhs + ' ' + sqlComparison;
-    }
-
-    return {sqlString, values};
+  getWhereSql(wheres, {connective = connectiveDefs.and, bindParamsUsed = 0} = {}) {
+    return getWhereSql(
+      this.constructor.name,
+      this.constructor.fields,
+      wheres,
+      {connective, bindParamsUsed}
+    );
   }
 
   getPrimaryKeyValues(useInternalValues = false) {
@@ -445,11 +317,7 @@ class Record extends Object {
   }
 
   getPrimaryKeyWherePack(useInternalValues = false, bindParamsUsed = 0) {
-    return this.getWherePack(
-      this.getPrimaryKeyValues(useInternalValues),
-      connectiveAnd,
-      bindParamsUsed
-    );
+    return this.getWhereSql(this.getPrimaryKeyValues(useInternalValues), {bindParamsUsed});
   }
 
   getFieldsSql() {
@@ -528,7 +396,7 @@ class Record extends Object {
     }
 
     const selectFieldsSql = this.getFieldsSql();
-    const wherePack = this.getWherePack(defaultedFields);
+    const whereSql = this.getWhereSql(defaultedFields);
 
     const loadQuery = [
       'SELECT',
@@ -536,17 +404,17 @@ class Record extends Object {
       'FROM',
       quoteIdentifier(this.constructor.table),
       'WHERE',
-      wherePack.sqlString,
+      whereSql.query,
       'LIMIT 2',
     ].join(' ');
 
     const conn = await this.getConnection();
-    if (this.debug) {
-      console.debug('LOAD', {loadQuery, loadValues: wherePack.values});
+    if (this.debugging()) {
+      console.debug('LOAD', {loadQuery, loadValues: whereSql.values});
     }
     const dbResponse = await conn.query({
       text: loadQuery,
-      values: wherePack.values,
+      values: whereSql.values,
       rowMode: 'array',
     });
     const rows = dbResponse.rows;
@@ -556,19 +424,23 @@ class Record extends Object {
 
     let result = false;
     switch (rows.length) {
-      default:
       case 0:
         // Nothing found
-        break;
-
-      case 2:
-        console.warn('Multiple results matched load() attempt.');
         break;
 
       case 1:
         this.loadDbArray(rows[0]);
 
         result = true;
+        break;
+
+      case 2:
+        const warning = 'Multiple results matched load() attempt.';
+        if (!this.warnings) {
+          this.warnings = [];
+        }
+        this.warnings.push(warning);
+        console.warn(warning);
         break;
     }
 
@@ -582,22 +454,22 @@ class Record extends Object {
       }
     }
 
-    const primaryKeyWherePack = this.getPrimaryKeyWherePack();
+    const primaryKeyWhereSql = this.getPrimaryKeyWherePack();
 
     const deleteQuery = [
       'DELETE FROM',
       quoteIdentifier(this.constructor.table),
       'WHERE',
-      primaryKeyWherePack.sqlString,
+      primaryKeyWhereSql.query,
     ].join(' ');
 
-    if (this.debug) {
-      console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWherePack.values});
+    if (this.debugging()) {
+      console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWhereSql.values});
     }
     const conn = await this.getConnection();
     const dbResponse = await conn.query({
       text: deleteQuery,
-      values: primaryKeyWherePack.values,
+      values: primaryKeyWhereSql.values,
       rowMode: 'array',
     });
     const wasDeleted = dbResponse.rowCount === 1;
@@ -620,12 +492,9 @@ class Record extends Object {
       let string;
       let bind = true;
       let bindValue;
-      if (value === valueNow) {
+      if (typeof value === 'symbol') {
         string = valueNow.description;
         bind = false;
-      } else if (value instanceof SqlValue) {
-        string = value.getValue();
-        bind = value.bind;
       } else {
         string = '$' + ++bindParamNum;
         bindValue = value;
@@ -643,6 +512,10 @@ class Record extends Object {
   }
 
   async save(skipReload = false, ignoreConflict = false) {
+    if (ignoreConflict && !skipReload) {
+      throw new InvalidOptionCombinationError('The ignoreConflict option requires skipReload since it is possible no row will be changed.');
+    }
+
     if (this.isLoaded) {
       const setStrings = [];
       const setValues = [];
@@ -658,7 +531,7 @@ class Record extends Object {
       }
       const setString = setStrings.join(', ');
 
-      const primaryKeyWherePack = this.getPrimaryKeyWherePack(true, setValues.length);
+      const primaryKeyWhereSql = this.getPrimaryKeyWherePack(true, setValues.length);
 
       let updateQuery = [
         'UPDATE',
@@ -666,14 +539,14 @@ class Record extends Object {
         'SET',
         setString,
         'WHERE',
-        primaryKeyWherePack.sqlString,
+        primaryKeyWhereSql.query,
       ].join(' ');
       if (!skipReload) {
         updateQuery += ' RETURNING ' + this.getFieldsSql();
       }
-      const updateValues = [...setValues, ...primaryKeyWherePack.values];
+      const updateValues = [...setValues, ...primaryKeyWhereSql.values];
 
-      if (this.debug) {
+      if (this.debugging()) {
         console.debug('UPDATE', {updateQuery, updateValues});
       }
       const conn = await this.getConnection();
@@ -719,22 +592,20 @@ class Record extends Object {
           insertValues.push(sqlField.bindValue);
         }
       }
-      if (!insertFields) {
-        return false; // Nothing to insert.
-      }
 
-      const valuesString = insertValues.length
-        ? 'VALUES (' + insertValueStrings.join(', ') + ')'
-        : 'DEFAULT VALUES';
+      let columnsString = null;
+      let valuesString = 'DEFAULT VALUES';
+      if (insertValues.length) {
+        columnsString = `(${insertFields.join(', ')})`;
+        valuesString = `VALUES (${insertValueStrings.join(', ')})`;
+      }
 
       let insertQuery = [
         'INSERT INTO',
         quoteIdentifier(this.constructor.table),
-        '(',
-        insertFields.join(', '),
-        ')',
+        columnsString,
         valuesString,
-      ].join(' ');
+      ].filter(Boolean).join(' ');
       if (ignoreConflict) {
         insertQuery += ' ON CONFLICT DO NOTHING';
       }
@@ -742,7 +613,7 @@ class Record extends Object {
         insertQuery += ' RETURNING ' + this.getFieldsSql();
       }
 
-      if (this.debug) {
+      if (this.debugging()) {
         console.debug('INSERT', {insertQuery, insertValues});
       }
       const conn = await this.getConnection();
@@ -764,7 +635,9 @@ class Record extends Object {
   }
 
   restore(fields) {
-    Object.assign(this, fields);
+    for (const [key, value] of Object.entries(fields)) {
+      this.set(key, value);
+    }
     this.setLoaded(true, true);
   }
 
@@ -777,7 +650,7 @@ class Record extends Object {
   } = {}) {
     const object = {};
     for (const field of fields || Object.keys(this.constructor.fields)) {
-      const defaultValue = this.getFieldDefaultValue(field);
+      const defaultValue = this.constructor.getFieldDefaultValue(field);
       const hasDefault = includeDefaults && defaultValue !== undefined && defaultValue !== null;
 
       if (onlyDirty && !this.isFieldDirty(field) && !hasDefault) {
@@ -790,6 +663,9 @@ class Record extends Object {
       let value = this.get(field);
       if (value === undefined && hasDefault) {
         value = defaultValue;
+      }
+      if (value instanceof SqlValue) {
+        value = value.value;
       }
       object[field] = value;
     }

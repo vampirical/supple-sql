@@ -1,0 +1,263 @@
+'use strict';
+const SQL = require('../src');
+const {createTestPool, dropTables} = require('./_utils');
+const test = require('ava');
+const PG = require('pg');
+
+console.debug = function () {}
+console.info = function () {}
+console.warn = function () {}
+console.error = function () {}
+
+async function sleep(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(function() {
+      resolve();
+    }, ms);
+  });
+}
+
+class GenericRecord extends SQL.Record {
+  static fields = {
+    id: {type: SQL.type.serial, primaryKey: true},
+    value: {type: SQL.type.text},
+  };
+  static primaryKeyFields = ['id'];
+  static table = 'supple_test_generic_record';
+}
+
+const pool = createTestPool();
+
+test.before(async () => {
+  return SQL.connected(async (conn) => {
+    await dropTables(conn, [GenericRecord.table]);
+
+    await conn.query(`
+      CREATE TABLE ${GenericRecord.table} (
+        id SERIAL PRIMARY KEY,
+        value TEXT
+      )
+    `);
+  }, {pool});
+});
+
+test.serial("getDefaultPool() can't be called before setDefaultPool()", async (t) => {
+  t.throws(() => SQL.getDefaultPool(), {instanceOf: SQL.NoPoolSetError});
+});
+
+test.serial("getDefaultPool() throws if there is not a default pool", async (t) => {
+  SQL.setDefaultPool(null);
+  t.throws(() => SQL.getDefaultPool(), {instanceOf: SQL.NoPoolSetError});
+});
+
+test.serial('setDefaultPool()', async (t) => {
+  const fakePool = new PG.Pool({
+    connectionString: 'postgresql://localhost/fake_pool',
+    ssl: false,
+  });
+
+  SQL.setDefaultPool(fakePool);
+  t.is(SQL.getDefaultPool(), fakePool);
+
+  SQL.setDefaultPool(null);
+});
+
+test.serial('passing a conn', async (t) => {
+  const conn = await pool.connect();
+
+  const aRecord = new GenericRecord(conn);
+  aRecord.value = 'Conn';
+  t.notThrowsAsync(aRecord.save());
+
+  const findPromise = GenericRecord.findOne(conn, {value: 'Conn'});
+  t.notThrowsAsync(findPromise);
+  const findResult = await findPromise;
+  t.deepEqual(findResult.data(), aRecord.data());
+
+  await SQL.transaction(async (tConn) => {
+    t.is(tConn, conn);
+  }, {conn});
+});
+
+test.serial('passing a pool', async (t) => {
+  const testPool = createTestPool(1);
+
+  const aRecord = new GenericRecord(testPool);
+  aRecord.value = 'Pool';
+  t.notThrowsAsync(aRecord.save());
+
+  const findPromise = GenericRecord.findOne(testPool, {value: 'Pool'});
+  t.notThrowsAsync(findPromise);
+  const findResult = await findPromise;
+  t.deepEqual(findResult.data(), aRecord.data());
+
+  const expectedConn = await testPool.connect();
+  expectedConn.release();
+
+  await SQL.connected(async (conn) => {
+    t.is(conn, expectedConn);
+  }, {pool: testPool});
+
+  await SQL.transaction(async (conn) => {
+    t.is(conn, expectedConn);
+  }, {pool: testPool});
+});
+
+test('default pool works', async (t) => {
+  const testPool = createTestPool(1);
+  SQL.setDefaultPool(testPool);
+
+  const aRecord = new GenericRecord();
+  aRecord.value = 'Default Pool';
+  t.notThrowsAsync(aRecord.save());
+
+  const findPromise = GenericRecord.findOne({value: 'Default Pool'});
+  t.notThrowsAsync(findPromise);
+  const findResult = await findPromise;
+  t.deepEqual(findResult.data(), aRecord.data());
+
+  const expectedConn = await testPool.connect();
+  expectedConn.release();
+
+  await SQL.connected(async (conn) => {
+    t.is(conn, expectedConn);
+  });
+
+  await SQL.transaction(async (conn) => {
+    t.is(conn, expectedConn);
+  });
+
+  SQL.setDefaultPool(null);
+});
+
+test.serial('no default pool fails as expected', async (t) => {
+  t.throws(() => new GenericRecord(), {instanceOf: SQL.NoPoolSetError});
+  await t.throwsAsync(GenericRecord.findOne({value: 'No Pool'}), {instanceOf: SQL.NoPoolSetError});
+  await t.throwsAsync(SQL.connected(() => {}), {instanceOf: SQL.NoPoolSetError});
+  await t.throwsAsync(SQL.transaction(() => {}), {instanceOf: SQL.NoPoolSetError});
+});
+
+test.serial('connections with a transaction left open are automatically pruned', async (t) => {
+  const pool = createTestPool(1);
+
+  const bustedConn = await pool.connect();
+  bustedConn.query('BEGIN;');
+  bustedConn.release();
+
+  await SQL.connected(async (conn) => {
+    t.not(conn, bustedConn);
+  }, {pool});
+});
+
+test.serial('broken connections are automatically pruned', async (t) => {
+  const pool = createTestPool(1);
+
+  const bustedConn = await pool.connect();
+  bustedConn.query = function() {
+    throw new Error('Artificially broken connection');
+  }
+  bustedConn.release();
+
+  await SQL.connected(async (conn) => {
+    t.not(conn, bustedConn);
+  }, {pool});
+});
+
+test.serial('pool unable to produce a working connection', async (t) => {
+  const bustedPool = createTestPool(1);
+
+  const realConnect = bustedPool.connect;
+  bustedPool.connect = async function () {
+    const bustedConn = await realConnect.call(bustedPool);
+    bustedConn.query = function() {
+      throw new Error('Artificially broken connection');
+    }
+    return bustedConn;
+  };
+
+  await t.throwsAsync(SQL.connected(async (conn) => {}, {pool: bustedPool}), {instanceOf: SQL.FailedToFindUsablePoolConnectionError});
+});
+
+test('connected requires a callback', async (t) => {
+  await t.throwsAsync(SQL.connected(null, {pool}), {instanceOf: SQL.MissingRequiredArgError});
+});
+
+test('connected statement timeout', async (t) => {
+  const shortTimeoutPool = new PG.Pool({
+    connectionString: 'postgresql://localhost/test',
+    ssl: false,
+    statement_timeout: 10,
+  });
+
+  await t.throwsAsync(SQL.connected(async (conn) => {
+    return conn.query('SELECT pg_sleep(20)');
+  }, {pool: shortTimeoutPool}), {instanceOf: SQL.StatementTimeoutError});
+});
+
+test('connected query errors bubble', async (t) => {
+  await t.throwsAsync(SQL.connected(async (conn) => {
+    return conn.query('SELECT * FROM this_does_not_exist');
+  }, {pool}), {instanceOf: PG.DatabaseError});
+});
+
+test('transaction requires a callback', async (t) => {
+  await t.throwsAsync(SQL.transaction(null, {pool}), {instanceOf: SQL.MissingRequiredArgError});
+});
+
+test('transaction statement timeout', async (t) => {
+  const shortTimeoutPool = new PG.Pool({
+    connectionString: 'postgresql://localhost/test',
+    ssl: false,
+    statement_timeout: 10,
+  });
+
+  await t.throwsAsync(SQL.transaction(async (conn) => {
+    return conn.query('SELECT pg_sleep(20)');
+  }, {pool: shortTimeoutPool}), {instanceOf: SQL.StatementTimeoutError});
+});
+
+test('transaction query errors bubble', async (t) => {
+  await t.throwsAsync(SQL.transaction(async (conn) => {
+    return conn.query('SELECT * FROM this_does_not_exist');
+  }, {pool}), {instanceOf: PG.DatabaseError});
+});
+
+test('nested transaction not allowed by default', async (t) => {
+  await SQL.transaction(async conn => {
+    await t.throwsAsync(SQL.transaction(async conn => {}, {conn}), {instanceOf: SQL.ImplicitNestedTransactionError});
+  }, {pool});
+});
+
+test('nested transaction allowed with flag', async (t) => {
+  await SQL.transaction(async conn => {
+    t.is(await SQL.transaction(async conn => {
+      return true;
+    }, {conn, allowNested: true}), true);
+  }, {pool});
+});
+
+test('connected autoDestroyConn', async (t) => {
+  const pool = createTestPool(1);
+
+  await SQL.connected(async (conn) => {
+    conn._the_one = true;
+  }, {pool, autoDestroyConn: true});
+
+  await sleep(1);
+  await SQL.connected(async (conn) => {
+    t.true(conn._the_one === undefined);
+  }, {pool});
+});
+
+test('transaction autoDestroyConn', async (t) => {
+  const pool = createTestPool(1);
+
+  await SQL.transaction(async (conn) => {
+    conn._the_one = true;
+  }, {pool, autoDestroyConn: true});
+
+  await sleep(1);
+  await SQL.connected(async (conn) => {
+    t.true(conn._the_one === undefined);
+  }, {pool});
+});

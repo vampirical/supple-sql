@@ -35,13 +35,16 @@ WHERE
 ORDER BY ordinal_position
 `;
 
+const regexNumeric = /^[0-9.]+$/;
+const regexReplaceTextWrapper = /^'(.*)'::text$/;
+
 async function generateRecord(...args) {
   const {connOrPool, args: parsedArgs} = parseArgs(args);
   const conn = connOrPool || SQL.getDefaultPool();
 
   const tableName = parsedArgs[0];
   if (!tableName) {
-    throw new Error('Table name arg is required.');
+    throw new SQL.MissingRequiredArgError('Table name argument is required.');
   }
   const schemaName = parsedArgs[1] || 'public';
 
@@ -69,7 +72,12 @@ async function generateRecord(...args) {
     if (/^nextval\(/.test(defaultString)) {
       defaultValue = null; // Serial type handling is responsible not defaultValue.
     } else if (defaultString && defaultString !== 'null') {
-      defaultValue = row.column_default;
+      const isNumeric = regexNumeric.test(defaultString);
+      if (isNumeric) {
+        defaultValue = parseFloat(defaultString);
+      } else {
+        defaultValue = row.column_default.replace(regexReplaceTextWrapper, '$1');
+      }
     }
 
     columns.push({
@@ -105,7 +113,7 @@ async function generateRecord(...args) {
       type: `SQL.type.${type}`,
     };
 
-    if (name !== key && name !== toSnake(key)) {
+    if ((name !== key && name !== toSnake(key)) || (name === key && name.toLowerCase() !== name)) {
       field.name = name;
     }
     if (!nullable) {
@@ -140,7 +148,7 @@ async function generateRecord(...args) {
     if (field.defaultValue) {
       fieldsString += `, defaultValue: ${
         field.defaultValue &&
-        `symbol(${field.defaultValue.toLowerCase()})` === String(SQL.valueNow).toLowerCase()
+        `symbol(${String(field.defaultValue).toLowerCase()})` === String(SQL.valueNow).toLowerCase()
           ? 'SQL.valueNow'
           : JSON.stringify(field.defaultValue)
       }`;
