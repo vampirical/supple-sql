@@ -3,11 +3,10 @@ const SQL = require('../src');
 const {dropTables, createTestPool} = require('./_utils');
 const test = require('ava');
 const PG = require('pg');
-const {outputType} = require('constants');
 
 // We want coverage for debug lines but without actually having to see them.
 // Disable this if you need to manually debug=true something.
-const DEBUG_COVERAGE = true;
+const DEBUG_COVERAGE = false;
 
 if (DEBUG_COVERAGE) {
   console.debug = function() {}
@@ -72,14 +71,12 @@ test.before(async () => {
     const testData = [];
     for (let i = 0; i < 200; ++i) {
       testData.push({
-        email: [`query-test-${i}@example.com`],
-        displayName: [`Display Name ${i}`],
-        aNumber: [i, 1000 + i],
+        aNumber: [i],
         aFlag: [null, true, false],
         optionalAt: [null, SQL.valueNow],
       });
     }
-    for (const c of testData) {
+    for (const [bI, c] of testData.entries()) {
       const flat = [];
 
       let maxI = 0;
@@ -93,12 +90,13 @@ test.before(async () => {
           const vI = Math.min(i, v.length - 1);
           recordData[k] = v[vI];
         }
+        recordData.email = `query-test-${bI}-${i}@example.com`;
+        recordData.displayName = `Display Name ${bI}, Variation ${i}`;
         flat.push(recordData);
       }
 
       Array.prototype.push.apply(testRecords, flat);
     }
-    // console.log(testRecords.map(r => Object.values(r).map(v => String(v)).join(' | ')));
     for (const recordData of testRecords) {
       const r = new QueryTestRecord(conn, recordData);
       await r.save();
@@ -184,11 +182,11 @@ test('number equals', async (t) => {
   await q.run();
 
   const results = Array.from(q);
-  t.is(results.length, 1);
+  t.is(results.length, 3);
   t.like(results, [
     {
-      email: 'query-test-0@example.com',
-      displayName: 'Display Name 0',
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
       aNumber: 0,
       optionalAt: null
     }
@@ -201,19 +199,18 @@ test('number in, implied', async (t) => {
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 6);
   t.like(results, [
     {
-      email: 'query-test-0@example.com',
-      displayName: 'Display Name 0',
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
       aNumber: 0,
       optionalAt: null
     },
     {
-      email: 'query-test-1@example.com',
-      displayName: 'Display Name 1',
-      aNumber: 1,
-      optionalAt: null
+      email: 'query-test-0-1@example.com',
+      displayName: 'Display Name 0, Variation 1',
+      aNumber: 0,
     },
   ]);
 });
@@ -224,61 +221,120 @@ test('number in, explicit', async (t) => {
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 6);
   t.like(results, [
     {
-      email: 'query-test-0@example.com',
-      displayName: 'Display Name 0',
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
       aNumber: 0,
       optionalAt: null
     },
     {
-      email: 'query-test-1@example.com',
-      displayName: 'Display Name 1',
-      aNumber: 1,
-      optionalAt: null
+      email: 'query-test-0-1@example.com',
+      displayName: 'Display Name 0, Variation 1',
+      aNumber: 0,
     },
   ]);
 });
 
-// test('top level comparison types', async (t) => {
-//   const rows = await new SQL.RecordQuery({
-//     x: SQL.all(),
-//     x: SQL.any(),
-//     x: SQL.distinctFrom(),
-//     x: SQL.equal(),
-//     x: SQL.exists(),
-//     x: SQL.greater(),
-//     x: SQL.greaterEqual(),
-//     x: SQL.ilike(),
-//     x: SQL.in(),
-//     x: SQL.iregex(),
-//     x: SQL.less(),
-//     x: SQL.lessEqual(),
-//     x: SQL.like(),
-//     x: SQL.notAll(),
-//     x: SQL.notAny(),
-//     x: SQL.notDistinctFrom(),
-//     x: SQL.notEqual(),
-//     x: SQL.notExists(),
-//     x: SQL.notIlike(),
-//     x: SQL.notIn(),
-//     x: SQL.notIregex(),
-//     x: SQL.notLike(),
-//     x: SQL.notRegex(),
-//     x: SQL.notSimilarTo(),
-//     x: SQL.notUnknown(),
-//     x: SQL.regex(),
-//     x: SQL.similarTo(),
-//     x: SQL.unknown(),
-//   }).run();
-// });
+test('connectives work as base where and as values', async (t) => {
+  const orAsValue = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.or(
+        SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})),
+        SQL.like('%5'),
+      )
+    })
+  // orAsValue.debug = true;
+  await orAsValue.run();
+  const orAsValueResults = orAsValue.data();
+  t.is(orAsValueResults.length, 61);
+  for (const result of orAsValueResults) {
+    t.true(result.id === 1 || result.id % 5 === 0);
+  }
 
-// TODO These "and" comparisons aren't changing the result counts, figure out why optionalAt null isn't being written out combined with aFlag=true.
+  const orTopLevel = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.or(
+      {id: SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'}))},
+      {id: SQL.like('%5')},
+    ));
+  // orTopLevel.debug = true;
+  await orTopLevel.run();
+  t.deepEqual(orTopLevel.data(), orAsValueResults);
+});
+
+// TODO Document that you can't do things like this and explain the performance reason why: SQL.any([QueryTestRecord.query({id: 1}, {returns: 'id'}), 100])
+// TODO Document that you can't put a field key object within a connective used as a value, should be obvious that is nonsense but just say it explicitly.
+
+test.only('connectives supported nested connectives', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.or(
+      SQL.and({id: SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'}))}, {id: 1}),
+      {id: SQL.like('%5')},
+    ))
+  q.debug = true;
+  await q.run();
+  const results = q.data();
+  t.is(results.length, 61);
+  for (const result of results) {
+    t.true(result.id === 1 || result.id % 5 === 0);
+  }
+});
+
+test('connectives as values support nested connectives', async (t) => {
+  // TODO Implement support for this but only this extra shape, don't get carried away remember we don't need to support fancier values within SqlValue than we already support.
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.or(
+        SQL.and(SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})), SQL.equal(1)),
+        SQL.like('%5'),
+      )
+    })
+  q.debug = true;
+  await q.run();
+  const results = q.data();
+  t.is(results.length, 61);
+  for (const result of results) {
+    t.true(result.id === 1 || result.id % 5 === 0);
+  }
+});
+
+test('NICE TO HAVE connective values throw a workable error if you try to nest a field object', async (t) => {});
+
+// TODO Remaining comparisons to do like the test above
+// SQL.any(),
+// SQL.distinctFrom(),
+// SQL.equal(),
+// SQL.exists(),
+// SQL.greater(),
+// SQL.greaterEqual(),
+// SQL.ilike(),
+// SQL.in(),
+// SQL.iregex(),
+// SQL.less(),
+// SQL.lessEqual(),
+// SQL.notAll(),
+// SQL.notAny(),
+// SQL.notDistinctFrom(),
+// SQL.notEqual(),
+// SQL.notExists(),
+// SQL.notIlike(),
+// SQL.notIn(),
+// SQL.notIregex(),
+// SQL.notLike(),
+// SQL.notRegex(),
+// SQL.notSimilarTo(),
+// SQL.notUnknown(),
+// SQL.regex(),
+// SQL.similarTo(),
+// SQL.unknown()
+
+// TODO Think of input and output values which are able to distinguish between whether =/IN/ANY/ALL/EXISTS was used
+//  versus the others for as many of these rhs scenarios as are applicable: single value, multiple values, subquery.
 
 test('object and', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aFlag: true, optionalAt: SQL.valueNotNull})
+    .where({aFlag: null, optionalAt: null})
     .run();
 
   const results = Array.from(q);
@@ -305,20 +361,20 @@ test('and array', async (t) => {
 
 test('nested connectives', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where(SQL.or(SQL.and({aNumber: 1000}, {aFlag: true}), SQL.or({aNumber: 1001, aFlag: false}, {aNumber: 1002})))
+    .where(SQL.or(SQL.and({aNumber: 100}, {aFlag: true}), SQL.or({aNumber: 101, aFlag: false}, {aNumber: 102})))
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 4);
+  t.is(results.length, 5);
 });
 
 test('nested array and', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where(SQL.or([{aNumber: 1000}, {aFlag: true}], SQL.or({aNumber: 1001, aFlag: false}, {aNumber: 1002})))
+    .where(SQL.or([{aNumber: 100}, {aFlag: true}], SQL.or({aNumber: 101, aFlag: false}, {aNumber: 102})))
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 4);
+  t.is(results.length, 5);
 });
 
 test('invalid field', async (t) => {
@@ -335,7 +391,7 @@ test('undefined is skipped', async (t) => {
 });
 
 test('getSql() implementor', async (t) => {
-  const aNumber = 1000;
+  const aNumber = 100;
 
   class CustomGetSql extends Object {
     getSql() {
@@ -352,7 +408,7 @@ test('getSql() implementor', async (t) => {
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.is(results[0].aNumber, aNumber);
   t.is(results[1].aNumber, aNumber);
 });
@@ -377,53 +433,53 @@ test('empty in is handled', async (t) => {
 
 test('Set as value', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: new Set([1000, 1001])})
+    .where({aNumber: new Set([100, 101])})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 4);
+  t.is(results.length, 6);
 })
 
 test('Set as SqlValue', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: SQL.in(new Set([1000, 1001]))})
+    .where({aNumber: SQL.in(new Set([100, 101]))})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 4);
+  t.is(results.length, 6);
 });
 
 test('output type object', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: [1000, 1001]})
+    .where({aNumber: [100, 101]})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 4);
+  t.is(results.length, 6);
   t.true(!(results[0] instanceof SQL.Record));
 });
 
 test('returns single value', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {returns: 'aNumber'})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   for (const result of results) {
-    t.is(result, 1000);
+    t.is(result, 100);
   }
 });
 
 test('returns single value accepts compatible output option', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {returns: 'aNumber', output: SQL.outputType.value})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   for (const result of results) {
-    t.is(result, 1000);
+    t.is(result, 100);
   }
 });
 
@@ -433,35 +489,35 @@ test('returns single value rejects incompatible output option', async (t) => {
 
 test('returns multiple values', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {returns: ['id', 'aNumber']})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.truthy(results[0].id);
-  t.is(results[0].aNumber, 1000);
+  t.is(results[0].aNumber, 100);
 });
 
 test('returns multiple values supports Sets', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {returns: new Set(['id', 'aNumber'])})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.truthy(results[0].id);
-  t.is(results[0].aNumber, 1000);
+  t.is(results[0].aNumber, 100);
 });
 
 test('returns multiple value accepts compatible output option', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {returns: ['id', 'aNumber'], output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.truthy(results[0].id);
-  t.is(results[0].aNumber, 1000);
+  t.is(results[0].aNumber, 100);
 });
 
 test('returns multiple values rejects incompatible output option', async (t) => {
@@ -533,7 +589,7 @@ test('output other than record is not supported with stream', async (t) => {
 
 test('non-async iteration of stream throws UnavailableInStreamModeError', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {stream: true})
-    .where({aNumber: 1000});
+    .where({aNumber: 100});
 
   await t.throwsAsync(async () => {
     for (const row of q) {}
@@ -542,7 +598,7 @@ test('non-async iteration of stream throws UnavailableInStreamModeError', async 
 
 test('iterating before run throws QueryNotLoadedIterationError', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: 1000});
+    .where({aNumber: 100});
 
   t.throws(() => {
     for (const row of q) {}
@@ -551,7 +607,7 @@ test('iterating before run throws QueryNotLoadedIterationError', async (t) => {
 
 test('iterating before run throws AsyncIterationUnavailableError', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: 1000});
+    .where({aNumber: 100});
 
   await t.throwsAsync(async () => {
     for await (const row of q) {}
@@ -560,18 +616,18 @@ test('iterating before run throws AsyncIterationUnavailableError', async (t) => 
 
 test('array functions are available', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const entries = Array.from(q.entries());
-  t.is(entries.length, 2);
+  t.is(entries.length, 3);
   t.is(entries[0][0], 0);
-  t.is(entries[0][1].aNumber, 1000);
+  t.is(entries[0][1].aNumber, 100);
 });
 
 test('array functions in stream mode throw UnavailableInStreamModeError', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {stream: true})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   t.throws(() => q.entries(), {instanceOf: SQL.UnavailableInStreamModeError});
@@ -579,22 +635,22 @@ test('array functions in stream mode throw UnavailableInStreamModeError', async 
 
 test('data() defaults', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   const data = q.data();
   t.deepEqual(results.map(r => r.data()), data);
 });
 
 test('data() output object', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.false(results[0] instanceof SQL.Record);
   const data = q.data();
   t.deepEqual(results, data);
@@ -602,14 +658,14 @@ test('data() output object', async (t) => {
 
 test('data() output object with filtering', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   const results = Array.from(q);
-  t.is(results.length, 2);
+  t.is(results.length, 3);
   t.false(results[0] instanceof SQL.Record);
   const data = q.data({fields: ['aNumber']});
-  t.is(data[0].aNumber, 1000);
+  t.is(data[0].aNumber, 100);
   t.is(data[0].id, undefined);
   t.is(Array.from(Object.keys(data[0])).length, 1);
 });
@@ -626,7 +682,7 @@ test('data() output object including defaults', async (t) => {
 
 test('data() output object including private', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecordWithDefaultsAndPrivates, {output: SQL.outputType.object})
-    .where({aNumber: 1000, aFlag: true})
+    .where({aNumber: 100, aFlag: true})
     .run();
 
   const data = q.data();
@@ -653,7 +709,7 @@ test('data() output value defaulted', async (t) => {
 
 test('data() output value handles private', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecordWithDefaultsAndPrivates, {returns: 'aFlag'})
-    .where({aNumber: 1000, aFlag: true})
+    .where({aNumber: 100, aFlag: true})
     .run();
 
   const data = q.data();
@@ -667,7 +723,7 @@ test('data() output value handles private', async (t) => {
 
 test('data() is not allowed with stream=true', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {stream: true})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   t.throws(() => q.data(), {instanceOf: SQL.UnavailableInStreamModeError});
@@ -675,7 +731,7 @@ test('data() is not allowed with stream=true', async (t) => {
 
 test('data() fields not allowed for outputType.value', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.value})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
 
   t.throws(() => q.data({fields: ['id']}), {instanceOf: SQL.InvalidOptionCombinationError});
@@ -683,22 +739,22 @@ test('data() fields not allowed for outputType.value', async (t) => {
 
 test('data() onlyDirty and onlySet are only supported for outputType.record', async (t) => {
   const vdQ = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.value})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
   t.throws(() => vdQ.data({onlyDirty: true}), {instanceOf: SQL.InvalidOptionCombinationError});
 
   const odQ = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
   t.throws(() => odQ.data({onlyDirty: true}), {instanceOf: SQL.InvalidOptionCombinationError});
 
   const vsQ = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.value})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
   t.throws(() => vsQ.data({onlySet: true}), {instanceOf: SQL.InvalidOptionCombinationError});
 
   const osQ = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
   t.throws(() => osQ.data({onlySet: true}), {instanceOf: SQL.InvalidOptionCombinationError});
 });
@@ -715,7 +771,7 @@ test('record type is required', async (t) => {
 
 test('order by with default direction', async(t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100, aFlag: SQL.valueNotNull})
     .orderBy('aFlag')
     .run();
 
@@ -725,7 +781,7 @@ test('order by with default direction', async(t) => {
 
 test('order by with explicit direction', async(t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100, aFlag: SQL.valueNotNull})
     .orderBy(['aFlag', SQL.sort.desc])
     .run();
 
@@ -735,21 +791,21 @@ test('order by with explicit direction', async(t) => {
 
 test('order by multiple flat', async(t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: [1000, 1001]})
+    .where({aNumber: [100, 101], aFlag: SQL.valueNotNull})
     .orderBy(['aNumber', SQL.sort.desc], ['aFlag', SQL.sort.desc])
     .run();
 
-  t.is(q.rows[0].aNumber, 1001);
-  t.is(q.rows[1].aNumber, 1001);
-  t.is(q.rows[2].aNumber, 1000);
-  t.is(q.rows[3].aNumber, 1000);
+  t.is(q.rows[0].aNumber, 101);
+  t.is(q.rows[1].aNumber, 101);
+  t.is(q.rows[2].aNumber, 100);
+  t.is(q.rows[3].aNumber, 100);
   t.is(q.rows[0].aFlag, true);
   t.is(q.rows[1].aFlag, false);
 });
 
 test('changing criteria marks as unloaded', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .run();
   t.is(q.isLoaded, true);
 
@@ -788,16 +844,18 @@ test('changing criteria marks as unloaded', async (t) => {
 
 test('subquery without limit or offset skips order by', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
-    .where({aNumber: 1000})
+    .where({aNumber: 100})
     .orderBy(['aFlag', SQL.sort.desc])
     .limit(1)
     .run();
 
-  const {query: queryWithOrderBy} = q.getSql({isSubquery: true});
+  const conn = await pool.connect();
+
+  const {query: queryWithOrderBy} = q.getSql(conn, {isSubquery: true});
   t.true(queryWithOrderBy.includes('ORDER BY'));
 
   q.limit(null);
-  const {query: queryWithoutOrderBy} = q.getSql({isSubquery: true});
+  const {query: queryWithoutOrderBy} = q.getSql(conn, {isSubquery: true});
   t.false(queryWithoutOrderBy.includes('ORDER BY'));
 });
 

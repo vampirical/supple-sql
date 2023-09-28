@@ -52,10 +52,17 @@ class RecordQuery extends Object {
   constructor(...args) {
     super();
 
-    const processedArgs = processArgs(this, args);
+    const {conn, pool, args: processedArgs} = parseArgs(args);
     const firstArg = processedArgs[0];
     if (!firstArg) {
       throw new RecordTypeRequiredError(firstArgRequiredMsg);
+    }
+
+    if (conn) {
+      this.setConnection(conn);
+    }
+    if (pool) {
+      this.setPool(pool);
     }
 
     const recordType = firstArg;
@@ -88,7 +95,8 @@ class RecordQuery extends Object {
   async getConnection() {
     let conn = this.conn;
     if (!conn) {
-      conn = await this.pool.connect();
+      const pool = this.pool || require('./index').getDefaultPool();
+      conn = await pool.connect();
     }
 
     return conn;
@@ -231,12 +239,6 @@ class RecordQuery extends Object {
   async run(...args) {
     this.validateReturns();
 
-    const {query, values} = this.getSql();
-
-    if (this.debug) {
-      console.debug('QUERY', {query, values});
-    }
-
     const conn = await this.getConnection();
     let isReleased = false;
     const release = () => {
@@ -249,6 +251,12 @@ class RecordQuery extends Object {
       isReleased = true;
     };
     try {
+      const {query, values} = this.getSql(conn);
+
+      if (this.debug) {
+        console.debug('QUERY', {query, values});
+      }
+
       if (this._options.stream) {
         if (this._options.returns) {
           throw new UnavailableInStreamModeError('Option returns is not supported when in stream mode.');
@@ -308,14 +316,14 @@ class RecordQuery extends Object {
   /* End Chainable */
 
   async count() {
-    const {query, values} = this.getSql({count: true});
-
-    if (this.debug) {
-      console.debug('QUERY COUNT', {query, values});
-    }
-
     const conn = await this.getConnection();
     try {
+      const {query, values} = this.getSql(conn, {count: true});
+
+      if (this.debug) {
+        console.debug('QUERY COUNT', {query, values});
+      }
+
       const dbResponse = await conn.query({
         text: query,
         values,
@@ -403,8 +411,8 @@ class RecordQuery extends Object {
     return results;
   }
 
-  getSql({count = false, isSubquery = false} = {}) {
-    const wherePack = getWhereSql(this.recordName, this.recordType.fields, this.wheres);
+  getSql(conn, {count = false, isSubquery = false} = {}) {
+    const wherePack = getWhereSql(conn, this.recordName, this.recordType.fields, this.wheres);
 
     let limitString = null;
     const hasLimit = this._limit !== null;

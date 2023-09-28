@@ -3,8 +3,8 @@
 const codeStatementTimeout = '57014'; // Technically 57014 is all "query_canceled" but the only reason we expect to see it is a statement_timeout.
 
 const comparison = {
-  all: 'ALL',
-  any: 'ANY',
+  all: '= ALL',
+  any: '= ANY',
   distinctFrom: 'IS DISTINCT FROM',
   equal: '=',
   exists: 'EXISTS',

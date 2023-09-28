@@ -138,8 +138,6 @@ async function getUsablePoolConnection(pool) {
   throw new FailedToFindUsablePoolConnectionError(`Failed to find a usable pool connection after ${i} attempts.`);
 }
 
-// TODO Refactor all generic Error()s into specific named errors. Then make sure all errors have tests and all throws check the type of the throw.
-
 const SQL = {
   comparison,
   connective,
@@ -179,9 +177,7 @@ const SQL = {
     this.pools.default = pool;
   },
 
-  // TODO Add getDebugConn()/getDebugPool() utils for the debug flag to activate in these functions. Detect if the pool is already wrapped and avoid double wrapping.
-
-  async connected(callback, {pool = null, autoDestroyConn = false, debug = this.debug} = {}) {
+  async connected(callback, {pool = null, autoDestroyConn = false} = {}) {
     if (!callback) {
       throw new MissingRequiredArgError('A callback is required for connected().');
     }
@@ -205,7 +201,7 @@ const SQL = {
     }
   },
 
-  async transaction(callback, {conn = null, pool = null, allowNested = false, autoDestroyConn = false, debug = this.debug} = {}) {
+  async transaction(callback, {conn = null, pool = null, allowNested = false, autoDestroyConn = false} = {}) {
     if (!callback) {
       throw new MissingRequiredArgError('A callback is required for transaction().');
     }

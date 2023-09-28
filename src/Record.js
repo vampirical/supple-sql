@@ -50,10 +50,8 @@ class Record extends Object {
     const type = this.prototype.constructor;
     const q = await type.query(...args);
     await q.run();
-    if (q.stream) {
-      return q;
-    }
-    return q.rows;
+
+    return q.stream ? q : q.rows;
   }
 
   static query(...args) {
@@ -151,7 +149,15 @@ class Record extends Object {
       throw new RecordMissingPrimaryKeyError(this.constructor.name);
     }
 
-    const processedArgs = processArgs(this, args);
+    const {conn, pool, args: processedArgs} = parseArgs(args);
+
+    if (conn) {
+      this.setConnection(conn);
+    }
+    if (pool) {
+      this.setPool(pool);
+    }
+
     if (processedArgs.length) {
       const firstArg = processedArgs[0];
       const isObject = typeof firstArg === 'object' && firstArg !== null;
@@ -227,7 +233,8 @@ class Record extends Object {
   async getConnection() {
     let conn = this.conn;
     if (!conn) {
-      conn = await this.pool.connect();
+      const pool = this.pool || require('./index').getDefaultPool();
+      conn = await pool.connect();
     }
 
     return conn;
@@ -292,8 +299,9 @@ class Record extends Object {
     return getFieldDbName(this.constructor.fields, key);
   }
 
-  getWhereSql(wheres, {connective = connectiveDefs.and, bindParamsUsed = 0} = {}) {
+  getWhereSql(conn, wheres, {connective = connectiveDefs.and, bindParamsUsed = 0} = {}) {
     return getWhereSql(
+      conn,
       this.constructor.name,
       this.constructor.fields,
       wheres,
@@ -316,8 +324,8 @@ class Record extends Object {
     return values;
   }
 
-  getPrimaryKeyWherePack(useInternalValues = false, bindParamsUsed = 0) {
-    return this.getWhereSql(this.getPrimaryKeyValues(useInternalValues), {bindParamsUsed});
+  getPrimaryKeyWherePack(conn, useInternalValues = false, bindParamsUsed = 0) {
+    return this.getWhereSql(conn, this.getPrimaryKeyValues(useInternalValues), {bindParamsUsed});
   }
 
   getFieldsSql() {
@@ -396,31 +404,38 @@ class Record extends Object {
     }
 
     const selectFieldsSql = this.getFieldsSql();
-    const whereSql = this.getWhereSql(defaultedFields);
 
-    const loadQuery = [
-      'SELECT',
-      selectFieldsSql,
-      'FROM',
-      quoteIdentifier(this.constructor.table),
-      'WHERE',
-      whereSql.query,
-      'LIMIT 2',
-    ].join(' ');
-
+    let dbResponse;
     const conn = await this.getConnection();
-    if (this.debugging()) {
-      console.debug('LOAD', {loadQuery, loadValues: whereSql.values});
+    try {
+      const whereSql = this.getWhereSql(conn, defaultedFields);
+
+      const loadQuery = [
+        'SELECT',
+        selectFieldsSql,
+        'FROM',
+        quoteIdentifier(this.constructor.table),
+        'WHERE',
+        whereSql.query,
+        'LIMIT 2',
+      ].join(' ');
+
+      if (this.debugging()) {
+        console.debug('LOAD', {loadQuery, loadValues: whereSql.values});
+      }
+
+      dbResponse = await conn.query({
+        text: loadQuery,
+        values: whereSql.values,
+        rowMode: 'array',
+      });
+    } finally {
+      if (!this.conn) {
+        conn.release();
+      }
     }
-    const dbResponse = await conn.query({
-      text: loadQuery,
-      values: whereSql.values,
-      rowMode: 'array',
-    });
+
     const rows = dbResponse.rows;
-    if (!this.conn) {
-      conn.release();
-    }
 
     let result = false;
     switch (rows.length) {
@@ -454,28 +469,34 @@ class Record extends Object {
       }
     }
 
-    const primaryKeyWhereSql = this.getPrimaryKeyWherePack();
-
-    const deleteQuery = [
-      'DELETE FROM',
-      quoteIdentifier(this.constructor.table),
-      'WHERE',
-      primaryKeyWhereSql.query,
-    ].join(' ');
-
-    if (this.debugging()) {
-      console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWhereSql.values});
-    }
     const conn = await this.getConnection();
-    const dbResponse = await conn.query({
-      text: deleteQuery,
-      values: primaryKeyWhereSql.values,
-      rowMode: 'array',
-    });
-    const wasDeleted = dbResponse.rowCount === 1;
-    if (!this.conn) {
-      conn.release();
+    let dbResponse;
+    try {
+      const primaryKeyWhereSql = this.getPrimaryKeyWherePack(conn);
+
+      const deleteQuery = [
+        'DELETE FROM',
+        quoteIdentifier(this.constructor.table),
+        'WHERE',
+        primaryKeyWhereSql.query,
+      ].join(' ');
+
+      if (this.debugging()) {
+        console.debug('DELETE', {deleteQuery, deleteValues: primaryKeyWhereSql.values});
+      }
+
+      dbResponse = await conn.query({
+        text: deleteQuery,
+        values: primaryKeyWhereSql.values,
+        rowMode: 'array',
+      });
+    } finally {
+      if (!this.conn) {
+        conn.release();
+      }
     }
+
+    const wasDeleted = dbResponse.rowCount === 1;
 
     if (wasDeleted) {
       this.setLoaded(false);
@@ -531,32 +552,37 @@ class Record extends Object {
       }
       const setString = setStrings.join(', ');
 
-      const primaryKeyWhereSql = this.getPrimaryKeyWherePack(true, setValues.length);
-
-      let updateQuery = [
-        'UPDATE',
-        quoteIdentifier(this.constructor.table),
-        'SET',
-        setString,
-        'WHERE',
-        primaryKeyWhereSql.query,
-      ].join(' ');
-      if (!skipReload) {
-        updateQuery += ' RETURNING ' + this.getFieldsSql();
-      }
-      const updateValues = [...setValues, ...primaryKeyWhereSql.values];
-
-      if (this.debugging()) {
-        console.debug('UPDATE', {updateQuery, updateValues});
-      }
       const conn = await this.getConnection();
-      const dbResponse = await conn.query({
-        text: updateQuery,
-        values: updateValues,
-        rowMode: 'array',
-      });
-      if (!this.conn) {
-        conn.release();
+      let dbResponse;
+      try {
+        const primaryKeyWhereSql = this.getPrimaryKeyWherePack(conn, true, setValues.length);
+
+        let updateQuery = [
+          'UPDATE',
+          quoteIdentifier(this.constructor.table),
+          'SET',
+          setString,
+          'WHERE',
+          primaryKeyWhereSql.query,
+        ].join(' ');
+        if (!skipReload) {
+          updateQuery += ' RETURNING ' + this.getFieldsSql();
+        }
+        const updateValues = [...setValues, ...primaryKeyWhereSql.values];
+
+        if (this.debugging()) {
+          console.debug('UPDATE', {updateQuery, updateValues});
+        }
+
+        dbResponse = await conn.query({
+          text: updateQuery,
+          values: updateValues,
+          rowMode: 'array',
+        });
+      } finally {
+        if (!this.conn) {
+          conn.release();
+        }
       }
 
       if (!skipReload) {

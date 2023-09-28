@@ -67,10 +67,10 @@ test.serial('passing a conn', async (t) => {
 
   const aRecord = new GenericRecord(conn);
   aRecord.value = 'Conn';
-  t.notThrowsAsync(aRecord.save());
+  await t.notThrowsAsync(aRecord.save());
 
   const findPromise = GenericRecord.findOne(conn, {value: 'Conn'});
-  t.notThrowsAsync(findPromise);
+  await t.notThrowsAsync(findPromise);
   const findResult = await findPromise;
   t.deepEqual(findResult.data(), aRecord.data());
 
@@ -82,14 +82,22 @@ test.serial('passing a conn', async (t) => {
 test.serial('passing a pool', async (t) => {
   const testPool = createTestPool(1);
 
-  const aRecord = new GenericRecord(testPool);
-  aRecord.value = 'Pool';
-  t.notThrowsAsync(aRecord.save());
+  const value = 'Pool';
 
-  const findPromise = GenericRecord.findOne(testPool, {value: 'Pool'});
-  t.notThrowsAsync(findPromise);
+  const aRecord = new GenericRecord(testPool);
+  aRecord.value = value;
+  await t.notThrowsAsync(aRecord.save());
+  const aData = aRecord.data();
+
+  const findOnePromise = GenericRecord.findOne(testPool, {value});
+  await t.notThrowsAsync(findOnePromise);
+  const findOneResult = await findOnePromise;
+  t.deepEqual(findOneResult.data(), aData);
+
+  const findPromise = GenericRecord.find(testPool, {value});
+  await t.notThrowsAsync(findPromise);
   const findResult = await findPromise;
-  t.deepEqual(findResult.data(), aRecord.data());
+  t.deepEqual(findResult.map(r => r.data()), [aData]);
 
   const expectedConn = await testPool.connect();
   expectedConn.release();
@@ -103,18 +111,26 @@ test.serial('passing a pool', async (t) => {
   }, {pool: testPool});
 });
 
-test('default pool works', async (t) => {
+test.serial('default pool works', async (t) => {
   const testPool = createTestPool(1);
   SQL.setDefaultPool(testPool);
 
-  const aRecord = new GenericRecord();
-  aRecord.value = 'Default Pool';
-  t.notThrowsAsync(aRecord.save());
+  const value = 'Default Pool';
 
-  const findPromise = GenericRecord.findOne({value: 'Default Pool'});
-  t.notThrowsAsync(findPromise);
+  const aRecord = new GenericRecord();
+  aRecord.value = value;
+  await t.notThrowsAsync(aRecord.save());
+  const aData = aRecord.data();
+
+  const findOnePromise = GenericRecord.findOne({value});
+  await t.notThrowsAsync(findOnePromise);
+  const findOneResult = await findOnePromise;
+  t.deepEqual(findOneResult.data(), aData);
+
+  const findPromise = GenericRecord.find({value});
+  await t.notThrowsAsync(findPromise);
   const findResult = await findPromise;
-  t.deepEqual(findResult.data(), aRecord.data());
+  t.deepEqual(findResult.map(r => r.data()), [aData]);
 
   const expectedConn = await testPool.connect();
   expectedConn.release();
@@ -131,9 +147,14 @@ test('default pool works', async (t) => {
 });
 
 test.serial('no default pool fails as expected', async (t) => {
-  t.throws(() => new GenericRecord(), {instanceOf: SQL.NoPoolSetError});
+  const r = new GenericRecord();
+  r.id = 1;
+  await t.throwsAsync(r.load(), {instanceOf: SQL.NoPoolSetError});
+
   await t.throwsAsync(GenericRecord.findOne({value: 'No Pool'}), {instanceOf: SQL.NoPoolSetError});
+
   await t.throwsAsync(SQL.connected(() => {}), {instanceOf: SQL.NoPoolSetError});
+
   await t.throwsAsync(SQL.transaction(() => {}), {instanceOf: SQL.NoPoolSetError});
 });
 
@@ -175,7 +196,7 @@ test.serial('pool unable to produce a working connection', async (t) => {
     return bustedConn;
   };
 
-  await t.throwsAsync(SQL.connected(async (conn) => {}, {pool: bustedPool}), {instanceOf: SQL.FailedToFindUsablePoolConnectionError});
+  await t.throwsAsync(SQL.connected(async () => {}, {pool: bustedPool}), {instanceOf: SQL.FailedToFindUsablePoolConnectionError});
 });
 
 test('connected requires a callback', async (t) => {
@@ -224,13 +245,13 @@ test('transaction query errors bubble', async (t) => {
 
 test('nested transaction not allowed by default', async (t) => {
   await SQL.transaction(async conn => {
-    await t.throwsAsync(SQL.transaction(async conn => {}, {conn}), {instanceOf: SQL.ImplicitNestedTransactionError});
+    await t.throwsAsync(SQL.transaction(async () => {}, {conn}), {instanceOf: SQL.ImplicitNestedTransactionError});
   }, {pool});
 });
 
 test('nested transaction allowed with flag', async (t) => {
   await SQL.transaction(async conn => {
-    t.is(await SQL.transaction(async conn => {
+    t.is(await SQL.transaction(async () => {
       return true;
     }, {conn, allowNested: true}), true);
   }, {pool});
