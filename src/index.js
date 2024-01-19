@@ -75,6 +75,7 @@ const replicaInvoice = await Invoice.findByPk(dbPool.replica, 5);
 'use strict';
 const {codeStatementTimeout, sort, type, valueNotNull, valueNow} = require('./constants');
 const errors = require('./errors');
+const {runMigrations} = require('./migrations');
 const Record = require('./Record');
 const Value = require('./SqlValue');
 const {Or} = require('./wheres');
@@ -163,7 +164,13 @@ const SQL = {
     this.pools.default = pool;
   },
 
-  async connected(callback, {pool = null} = {}) {
+  runMigrations,
+
+  // TODO For both connected() and transaction() callbacks, test putting a bunch of stuff on "this" and then using it.
+  //   Put the connection on there and have all the functions which accept connOrPool as an arg also check for that special named version on this.
+  //   Put all the connectives and comparisons on there as well since they're named well enough.
+
+  async connected(callback, {pool = null, autoDestroyConn = false} = {}) {
     if (!callback) {
       throw new CallbackRequiredError();
     }
