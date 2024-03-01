@@ -1,3 +1,4 @@
+'use strict';
 const {MissingRequiredArgError, RecordTypeRequiredError} = require('./errors');
 const {Transform} = require('stream');
 

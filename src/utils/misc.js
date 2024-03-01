@@ -1,3 +1,4 @@
+'use strict';
 const {toSnake} = require('./case');
 const {sort} = require('../constants');
 

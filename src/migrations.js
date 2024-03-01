@@ -1,3 +1,4 @@
+'use strict';
 const {quoteIdentifier} = require('./utils/sql');
 const path = require('path');
 const pFs = require('fs').promises;
