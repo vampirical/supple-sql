@@ -10,8 +10,7 @@
     "encoding": "utf8",
     "readme": "./README.md",
     "recurse": true,
-    "template": "./node_modules/clean-jsdoc-theme",
-    "tutorials": "tutorials/"
+    "template": "./node_modules/clean-jsdoc-theme"
   },
   "markdown": {
     "hardwrap": false,
