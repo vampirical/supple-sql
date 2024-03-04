@@ -27,7 +27,7 @@ SQL.setDefaultPool(pool);
 If you'd like to run multiple queries on a single connection there's a helper for that.
 ```javascript
 const result = await SQL.connected(async function (conn) {
-  // Pass conn explicitly as the first argument to all your SQL object constructors.
+  // Pass conn explicitly as the first argument to all your Supple object constructors.
   // Whatever you return will be passed through as the return of connected().
   // If an error occurs either in your code or within your database the connection will be released
   // and either returned to the pool or destroyed if it isn't recoverable.
@@ -82,6 +82,10 @@ user.email = 'test@example.com';
 await user.load();
 // If not found, load returns false and user.isLoaded = false.
 
+const user = new User({email: 'test@example.com'});
+await user.load();
+// If not found, load returns false and user.isLoaded = false.
+
 const user = new User();
 await user.load({email: 'test@example.com'});
 // If not found, load returns false, user.isLoaded = false, and email isn't set on user.
@@ -128,7 +132,7 @@ const userQuery = User.query({email: SQL.like('%@example.com')}, {orderBy: 'emai
 await userQuery.run();
 // userQuery:
 //   Is directly iterable for the same rows you'd get out of a non-stream find, and implements all array prototype methods.
-//   Has a vanilla .rows javascript property. 
+//   Has a vanilla javascript array .rows property. 
 //   Is async iteratable if stream=true.
 ```
 
@@ -143,7 +147,7 @@ await User.find(SQL.and({id: 1}, {displayName: 'Max Power'})); // SQL.and() is a
 await User.find({displayName: SQL.ilike('% power')});
 await User.find({id: SQL.lessEqual(5)});
 
-// ANDs and ORs can appear as both top level wheres and as values under field keys.
+// ANDs and ORs can appear as both top level wheres and as values under field keys, nested as deeply as you'd like.
 await User.find(SQL.or({id: 1}, {id: 2}));
 await User.find({id: SQL.or(1, 2)});
 
@@ -183,7 +187,7 @@ const user = User.find({createdAt: SQL.greaterThan(new SQL.Value("now() - '1 day
 If you need to load records manually.
 ```javascript
 await SQL.connected(async function (conn) {
-  const dbResp = conn.query(COMPLICATED_QUERY);
+  const dbResp = await conn.query(COMPLICATED_QUERY);
   const users = dbResp.rows.map(r => User.newFromDbRow(r));
 });
 ```
@@ -194,7 +198,7 @@ await SQL.connected(async function (conn) {
 const pool = new PG.Pool({connectionString});
 SQL.setDefaultPool(pool);
 
-const invoices = await SQL.transaction(async function (conn) {
+const userInvoices = await SQL.connected(async function (conn) {
   const invoice = await Invoice.findOne(conn, {id: 5});
   if (!invoice) {
     throw new Error('Invoice not found!');
