@@ -154,7 +154,7 @@ await User.find({id: SQL.or(1, 2)});
 // You can use sub-queries.
 await User.find({
   id: SQL.and(
-    QueryTestRecord.query({displayName: SQL.notEqual('Max Power')}, {returns: 'id'}),
+    User.query({displayName: SQL.notEqual('Max Power')}, {returns: 'id'}),
     SQL.greaterThan(10)
   )
 });
@@ -165,7 +165,7 @@ There are a few things you can't do.
 // You can't nest sub-queries inside of value arrays.
 // It isn't worth the performance hit necessary to check for them
 // and you can just wrap the query and the values using an AND.
-SQL.any([QueryTestRecord.query({id: 1}, {returns: 'id'}), 100])
+SQL.any([User.query({id: 1}, {returns: 'id'}), 100])
 
 // You can't nest field keys under another field key.
 // Even in this best case, it is silly, in the worst case it is nonsense.
