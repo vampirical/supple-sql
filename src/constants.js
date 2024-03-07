@@ -19,6 +19,7 @@ const codeStatementTimeout = '57014'; // Technically 57014 is all "query_cancele
  * @property {string} less
  * @property {string} lessEqual
  * @property {string} like
+ * @property {string} not
  * @property {string} notAll
  * @property {string} notAny
  * @property {string} notDistinctFrom
@@ -49,6 +50,7 @@ const comparison = {
   less: '<',
   lessEqual: '<=',
   like: 'LIKE',
+  not: 'NOT',
   notAll: '!= ALL',
   notAny: '!= ANY',
   notDistinctFrom: 'IS NOT DISTINCT FROM',
@@ -72,9 +74,11 @@ const comparison = {
  *
  * @property {string} and
  * @property {string} or
+ * @property {string} not
  */
 const connective = {
   and: 'and',
+  not: 'not',
   or: 'or',
 };
 

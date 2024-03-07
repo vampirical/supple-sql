@@ -13,7 +13,7 @@ class SqlValue extends Object {
   quote;
 
   /**
-   * Create a SqlValue that species how a value should be used within queries.
+   * Create a SqlValue that specifies how a value is bound/quoted and compared to within generated SQL.
    *
    * @param {*} value
    * @param bind

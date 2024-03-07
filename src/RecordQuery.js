@@ -278,12 +278,16 @@ class RecordQuery extends Object {
    * Set options for the query, chainable.
    *
    * @param {Object} options
+   * @param {boolean} [options.debug] - Like debug=.
    * @param {outputType} [options.output] - Like output().
    * @param {string|Array|Set} [options.returns] - Like returns().
    * @param {boolean} options [options.stream]
    * @returns {RecordQuery}
    */
   options(options) {
+    if (options.debug !== undefined) {
+      this.debug = options.debug;
+    }
     if (options.stream) {
       const oldStream = this._options.stream;
       this._options.stream = options.stream;

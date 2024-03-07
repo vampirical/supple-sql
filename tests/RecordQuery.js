@@ -111,12 +111,6 @@ test('a record type is required', async (t) => {
   SQL.setDefaultPool(null);
 });
 
-/*
-top level all comparison types
-top level subquery
-nested subquery
-*/
-
 test('is null', async (t) => {
   const bQ = await new SQL.RecordQuery(pool, QueryTestRecord)
     .where({aFlag: null})
@@ -236,96 +230,169 @@ test('number in, explicit', async (t) => {
   ]);
 });
 
-test('connectives work as base where and as values', async (t) => {
-  const orAsValue = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({
-      id: SQL.or(
-        SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})),
-        SQL.like('%5'),
-      )
-    });
-  // orAsValue.debug = true;
-  await orAsValue.run();
-  const orAsValueResults = orAsValue.data();
-  t.is(orAsValueResults.length, 61);
-  for (const result of orAsValueResults) {
-    t.true(result.id === 1 || result.id % 5 === 0);
-  }
-
-  const orTopLevel = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where(SQL.or(
-      {id: SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'}))},
-      {id: SQL.like('%5')},
-    ));
-  // orTopLevel.debug = true;
-  await orTopLevel.run();
-  t.deepEqual(orTopLevel.data(), orAsValueResults);
-});
-
-test('connectives support nested connectives', async (t) => {
-  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where(SQL.or(
-      SQL.and({id: SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})), aNumber: 0}, {id: 1}),
-      {id: SQL.like('%5')},
-    ));
-  // q.debug = true;
+test('string equals', async (t) => {
+  const q = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({displayName: 'Display Name 0, Variation 0'});
   await q.run();
-  const results = q.data();
-  t.is(results.length, 61);
-  for (const result of results) {
-    t.true(result.id === 1 || result.id % 5 === 0);
-  }
+
+  const results = Array.from(q);
+  t.is(results.length, 1);
+  t.like(results, [
+    {
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
+      aNumber: 0,
+      optionalAt: null
+    }
+  ]);
 });
 
-test('connectives as values support nested connectives', async (t) => {
-  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
-    .where({
-      id: SQL.or(
-        SQL.and(SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})), SQL.equal(1)),
-        SQL.like('%5'),
-      )
-    });
-  // q.debug = true;
+test('string equal, explicit', async (t) => {
+  const q = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({displayName: SQL.equal('Display Name 0, Variation 0')});
   await q.run();
-  const results = q.data();
-  t.is(results.length, 61);
-  for (const result of results) {
-    t.true(result.id === 1 || result.id % 5 === 0);
-  }
+
+  const results = Array.from(q);
+  t.is(results.length, 1);
+  t.like(results, [
+    {
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
+      aNumber: 0,
+      optionalAt: null
+    }
+  ]);
 });
 
-// test('TODO NICE TO HAVE connective values throw a workable error if you try to nest a field object', async (t) => {});
+test('string in, values', async (t) => {
+  const q = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({displayName: SQL.in(['Display Name 0, Variation 0', 'Display Name 0, Variation 1'])});
+  await q.run();
 
-// TODO TEST Remaining comparisons to do like the test above
-// SQL.any(),
-// SQL.distinctFrom(),
-// SQL.equal(),
-// SQL.exists(),
-// SQL.greater(),
-// SQL.greaterEqual(),
-// SQL.ilike(),
-// SQL.in(),
-// SQL.iregex(),
-// SQL.less(),
-// SQL.lessEqual(),
-// SQL.notAll(),
-// SQL.notAny(),
-// SQL.notDistinctFrom(),
-// SQL.notEqual(),
-// SQL.notExists(),
-// SQL.notIlike(),
-// SQL.notIn(),
-// SQL.notIregex(),
-// SQL.notLike(),
-// SQL.notRegex(),
-// SQL.notSimilarTo(),
-// SQL.notUnknown(),
-// SQL.regex(),
-// SQL.similarTo(),
-// SQL.unknown()
+  const results = Array.from(q);
+  t.is(results.length, 2);
+  t.like(results, [
+    {
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
+      aNumber: 0,
+      optionalAt: null
+    },
+    {
+      email: 'query-test-0-1@example.com',
+      displayName: 'Display Name 0, Variation 1',
+      aNumber: 0,
+    },
+  ]);
+});
 
-// TODO TEST Think of input and output values which are able to distinguish between whether =/IN/ANY/ALL/EXISTS was used
-//  versus the others for as many of these rhs scenarios as are applicable: single value, multiple values, subquery.
+test('string any, raw string subquery', async (t) => {
+  const q = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({email: SQL.any(`SELECT 'query-test-0-0@example.com'`, {bind: false})});
+  await q.run();
+
+  const results = Array.from(q);
+  t.is(results.length, 1);
+  t.like(results, [
+    {
+      email: 'query-test-0-0@example.com',
+      displayName: 'Display Name 0, Variation 0',
+      aNumber: 0,
+      optionalAt: null
+    }
+  ]);
+});
+
+test('number less', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.less(5)})
+    .run();
+
+  const results = Array.from(q);
+  t.is(results.length, 4);
+  t.like(results, [
+    {id: 1},
+    {id: 2},
+    {id: 3},
+    {id: 4},
+  ]);
+});
+
+test('number lessEqual', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.lessEqual(5)})
+    .run();
+
+  const results = Array.from(q);
+  t.is(results.length, 5);
+  t.like(results, [
+    {id: 1},
+    {id: 2},
+    {id: 3},
+    {id: 4},
+    {id: 5},
+  ]);
+});
+
+test('number greater', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.greater(596)})
+    .run();
+
+  const results = Array.from(q);
+  t.is(results.length, 4);
+  t.like(results, [
+    {id: 597},
+    {id: 598},
+    {id: 599},
+    {id: 600},
+  ]);
+});
+
+test('number greaterEqual', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.greaterEqual(596)})
+    .run();
+
+  const results = Array.from(q);
+  t.is(results.length, 5);
+  t.like(results, [
+    {id: 596},
+    {id: 597},
+    {id: 598},
+    {id: 599},
+    {id: 600},
+  ]);
+});
+
+test('exists', async (t) => {
+  const existsQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.and({id: [1, 2]}, SQL.exists('SELECT 1', {bind: false})))
+    .run();
+  const existsResults = Array.from(existsQ);
+  t.is(existsResults.length, 2);
+  t.like(existsResults, [
+    {id: 1},
+    {id: 2},
+  ]);
+
+  const nonMatchingExistsQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.and({id: [1, 2]}, SQL.exists('SELECT FROM generate_series(1, 0)', {bind: false})))
+    .run();
+  const nonMatchingExistsResults = Array.from(nonMatchingExistsQ);
+  t.is(nonMatchingExistsResults.length, 0);
+});
+
+test('not', async (t) => {
+  const existsQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.and({id: [1, 2]}, SQL.not(`id = 1`, {bind: false})))
+    .run();
+  const existsResults = Array.from(existsQ);
+  t.is(existsResults.length, 1);
+  t.like(existsResults, [
+    {id: 2},
+  ]);
+});
 
 test('object and', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
@@ -370,6 +437,75 @@ test('nested array and', async (t) => {
 
   const results = Array.from(q);
   t.is(results.length, 5);
+});
+
+test('connectives as values support nested connectives', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.or(
+        SQL.and(SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})), SQL.equal(1)),
+        SQL.like('%5'),
+      )
+    });
+  await q.run();
+  const results = q.data();
+  t.is(results.length, 61);
+  for (const result of results) {
+    t.true(result.id === 1 || result.id % 5 === 0);
+  }
+});
+
+test('connective values throw an error if you try to nest a field object', async (t) => {
+  const q = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.or(
+        SQL.and({id: 1}, {id: 1}),
+        {id: 2},
+      )
+    });
+  await t.throwsAsync(q.run(), {instanceOf: SQL.WhereParserError});
+});
+
+test('connectives work as base where and as values', async (t) => {
+  const orAsValue = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.or(
+        SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'})),
+        SQL.like('%5'),
+      )
+    });
+  await orAsValue.run();
+  const orAsValueResults = orAsValue.data();
+  t.is(orAsValueResults.length, 61);
+  for (const result of orAsValueResults) {
+    t.true(result.id === 1 || result.id % 5 === 0);
+  }
+
+  const orTopLevel = new SQL.RecordQuery(pool, QueryTestRecord)
+    .where(SQL.or(
+      {id: SQL.all(QueryTestRecord.query({id: 1}, {returns: 'id'}))},
+      {id: SQL.like('%5')},
+    ));
+  await orTopLevel.run();
+  t.deepEqual(orTopLevel.data(), orAsValueResults);
+});
+
+test('rhs only comparisons throw when used within value', async (t) => {
+  const notQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.not('whatever')});
+  await t.throwsAsync(notQ.run(), {instanceOf: SQL.WhereParserError});
+
+  const existsQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.exists('whatever')});
+  await t.throwsAsync(existsQ.run(), {instanceOf: SQL.WhereParserError});
+
+  const notExistsQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.notExists('whatever')});
+  await t.throwsAsync(notExistsQ.run(), {instanceOf: SQL.WhereParserError});
+
+  const notNestedQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({id: SQL.and(SQL.not('whatever'))});
+  await t.throwsAsync(notNestedQ.run(), {instanceOf: SQL.WhereParserError});
 });
 
 test('invalid field', async (t) => {
@@ -856,4 +992,9 @@ test('subquery without limit or offset skips order by', async (t) => {
   q.limit(null);
   const {query: queryWithoutOrderBy} = q.getSql(conn, {isSubquery: true});
   t.false(queryWithoutOrderBy.includes('ORDER BY'));
+});
+
+test('debug', async (t) => {
+  new SQL.RecordQuery(pool, QueryTestRecord, {debug: true});
+  t.true(true);
 });

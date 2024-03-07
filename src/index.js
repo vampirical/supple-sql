@@ -227,7 +227,7 @@ const SQL = {
   },
 
   /**
-   * Shortcut for where AND.
+   * Where AND.
    *
    * @param {...*} wheres
    * @returns {And}
@@ -237,7 +237,7 @@ const SQL = {
   },
 
   /**
-   * Shortcut for where OR.
+   * Where OR.
    *
    * @param {...*} wheres
    * @returns {Or}

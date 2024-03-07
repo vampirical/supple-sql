@@ -187,9 +187,20 @@ class InvalidOptionCombinationError extends Error {
   }
 }
 
+/**
+ * @typedef {Error} WhereParserError
+ * @memberOf SQL
+ */
+class WhereParserError extends Error {
+  constructor(message = 'Where parsing failed.') {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 module.exports = {
-  AutoPrunedUnusablePoolConnectionError,
   AsyncIterationUnavailableError,
+  AutoPrunedUnusablePoolConnectionError,
   FailedToFindUsablePoolConnectionError,
   FieldNotFoundError,
   ImplicitNestedTransactionError,
@@ -200,9 +211,10 @@ module.exports = {
   MissingRequiredArgError,
   NoPoolSetError,
   PrimaryKeyValueMissingError,
+  QueryNotLoadedIterationError,
   RecordMissingPrimaryKeyError,
   RecordTypeRequiredError,
-  QueryNotLoadedIterationError,
   StatementTimeoutError,
   UnavailableInStreamModeError,
+  WhereParserError,
 };

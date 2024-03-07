@@ -1,6 +1,6 @@
 'use strict';
 const {comparison: comparisonDefs, connective: connectiveDefs, type: typeDefs, valueNotNull} = require('./constants');
-const {FieldNotFoundError} = require('./errors');
+const {FieldNotFoundError, WhereParserError} = require('./errors');
 const {getFieldDbName} = require('./utils/misc');
 const {quoteIdentifier} = require('./utils/sql');
 const SqlValue = require('./SqlValue');
@@ -10,10 +10,17 @@ const PARENS_COMPARISONS = new Set([
   comparisonDefs.any,
   comparisonDefs.exists,
   comparisonDefs.in,
+  comparisonDefs.not,
   comparisonDefs.notAll,
   comparisonDefs.notAny,
   comparisonDefs.notExists,
   comparisonDefs.notIn,
+]);
+
+const RHS_ONLY_COMPARISONS = new Set([
+  comparisonDefs.exists,
+  comparisonDefs.not,
+  comparisonDefs.notExists,
 ]);
 
 const TEXT_COMPARISONS = new Set([
@@ -114,7 +121,14 @@ function getWhereSql(
 
   let fields;
   if (lhs) {
+    const wheresProto = Object.getPrototypeOf(wheres);
+    const isPojoLike = wheres !== null && typeof wheres === 'object' && (wheresProto === null || wheresProto === Object.prototype);
+    if (isPojoLike) {
+      throw new WhereParserError(`Where parsing failed for key "${lhs}". Where object literals are not allowed within values.`);
+    }
     fields = [[lhs, wheres]];
+  } else if (wheres instanceof SqlValue) {
+    fields = [[undefined, wheres]];
   } else {
     // We now know that these represent simple fields.
     fields = typeof wheres.entries === 'function' ? wheres.entries() : Object.entries(wheres);
@@ -124,7 +138,7 @@ function getWhereSql(
   const values = [];
   for (const [key, value] of fields) {
     const fieldDefinition = fieldDefinitions[key];
-    if (!fieldDefinition) {
+    if (key !== undefined && !fieldDefinition) {
       throw new FieldNotFoundError(key, recordName);
     }
 
@@ -175,7 +189,11 @@ function getWhereSql(
     let sqlLhs = columnSql.lhs;
     const sqlComparison = columnSql.comparison || comparisonDefs.equal;
 
-    if (TEXT_COMPARISONS.has(sqlComparison) && fieldDefinition.type !== typeDefs.text) {
+    if (key && RHS_ONLY_COMPARISONS.has(sqlComparison)) {
+      throw new WhereParserError(`Where parsing failed for key "${key}". Comparison requested (${sqlComparison}) does not support a left hand side.`);
+    }
+
+    if (TEXT_COMPARISONS.has(sqlComparison) && fieldDefinition && fieldDefinition.type !== typeDefs.text) {
       sqlLhs += '::text';
     }
 
@@ -190,7 +208,7 @@ function getWhereSql(
       }
     }
 
-    const queryPart = `${sqlLhs} ${sqlComparison} ${sqlRhs}`;
+    const queryPart = [sqlLhs, sqlComparison, sqlRhs].filter(v => v !== undefined).join(' ');
 
     queryParts.push(queryPart);
     Array.prototype.push.apply(values, columnSql.values);
@@ -203,7 +221,7 @@ function getWhereSql(
 }
 
 function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comparison = null} = {}) {
-  let lhs = quoteIdentifier(getFieldDbName(fieldDefinitions, key));
+  let lhs = key ? quoteIdentifier(getFieldDbName(fieldDefinitions, key)) : undefined;
   let rhs = null;
   let values = [];
 
@@ -236,8 +254,9 @@ function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comp
     outputComparison = value.comparison || comparisonDefs.equal;
 
     const actualValue = value.getValue();
+    const isParensComparison = PARENS_COMPARISONS.has(outputComparison);
     if (value.bind) {
-      if (PARENS_COMPARISONS.has(outputComparison) && (Array.isArray(actualValue) || actualValue instanceof Set)) {
+      if (isParensComparison && (Array.isArray(actualValue) || actualValue instanceof Set)) {
         if (actualValue instanceof Set) {
           for (const subValue of actualValue) {
             values.push(subValue);
@@ -255,7 +274,7 @@ function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comp
         values.push(actualValue);
       }
     } else {
-      rhs = actualValue;
+      rhs = isParensComparison ? `(${actualValue})` : actualValue;
     }
   } else if (value && typeof value.getSql === 'function') { // RecordQuery or custom implementor.
     const sqlPack = value.getSql(conn, {isSubquery: true});
