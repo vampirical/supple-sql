@@ -226,11 +226,9 @@ class RecordQuery extends Object {
    * @returns {RecordQuery}
    */
   orderBy(...orderBys) {
-    const hasMultiple = Array.isArray(orderBys[0]);
-    if (hasMultiple) {
-      Array.prototype.push.apply(this.orderBys, orderBys);
-    } else {
-      this.orderBys.push(orderBys);
+    for (const orderBy of orderBys) {
+      const expanded = !Array.isArray(orderBy) ? [orderBy] : orderBy;
+      this.orderBys.push(expanded);
     }
 
     this.setLoaded(false);

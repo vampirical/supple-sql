@@ -938,6 +938,21 @@ test('order by multiple flat', async(t) => {
   t.is(q.rows[1].aFlag, false);
 });
 
+test('order by multiple nested array', async(t) => {
+  const rows = await QueryTestRecord.find(
+    pool,
+    {aNumber: [100, 101], aFlag: SQL.valueNotNull},
+    {orderBy: [['aNumber', SQL.sort.desc], ['aFlag', SQL.sort.desc]]}
+  );
+
+  t.is(rows[0].aNumber, 101);
+  t.is(rows[1].aNumber, 101);
+  t.is(rows[2].aNumber, 100);
+  t.is(rows[3].aNumber, 100);
+  t.is(rows[0].aFlag, true);
+  t.is(rows[1].aFlag, false);
+});
+
 test('changing criteria marks as unloaded', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord, {output: SQL.outputType.object})
     .where({aNumber: 100})

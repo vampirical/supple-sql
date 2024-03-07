@@ -1,6 +1,6 @@
 'use strict';
 /* eslint-disable no-console */
-const {connective: connectiveDefs, type, valueNow} = require('./constants');
+const {connective: connectiveDefs, sort, type, valueNow} = require('./constants');
 const {
   FieldNotFoundError,
   IncorrectFieldsError,
@@ -150,7 +150,11 @@ class Record extends Object {
         instance.offset(offset);
       }
       if (orderBy) {
-        instance.orderBy(orderBy);
+        if (Array.isArray(orderBy) && !Object.values(sort).includes(orderBy[1])) {
+          instance.orderBy(...orderBy);
+        } else {
+          instance.orderBy(orderBy);
+        }
       }
       instance.options(options);
     }
