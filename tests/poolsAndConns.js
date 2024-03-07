@@ -271,3 +271,11 @@ test('transaction autoDestroyConn', async (t) => {
     t.true(conn._the_one === undefined);
   }, {pool});
 });
+
+test('query one-off', async (t) => {
+  const pool = createTestPool(1);
+
+  const result = await SQL.query('SELECT 5 foo', null, {pool});
+  t.is(result.rows.length, 1);
+  t.is(result.rows[0].foo, 5);
+});

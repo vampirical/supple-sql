@@ -127,8 +127,9 @@ const SQL = {
    * Creates and manages a connection around a callback.
    *
    * @param {function} callback
-   * @param {pg.Pool} [pool]
-   * @param {boolean} [autoDestroyConn=false]
+   * @param {Object} [options]
+   * @param {pg.Pool} [options.pool]
+   * @param {boolean} [options.autoDestroyConn=false]
    * @returns {Promise<*>}
    */
   async connected(callback, {pool = null, autoDestroyConn = false} = {}) {
@@ -159,10 +160,11 @@ const SQL = {
    * Creates and manages a transaction around a callback.
    *
    * @param {function} callback
-   * @param {pg.Client} [conn]
-   * @param {pg.Pool} [pool]
-   * @param {boolean} [allowNested=false]
-   * @param {boolean} [autoDestroyConn=false]
+   * @param {Object} [options]
+   * @param {pg.Client} [options.conn]
+   * @param {pg.Pool} [options.pool]
+   * @param {boolean} [options.allowNested=false]
+   * @param {boolean} [options.autoDestroyConn=false]
    * @returns {Promise<*>}
    */
   async transaction(callback, {conn = null, pool = null, allowNested = false, autoDestroyConn = false} = {}) {
@@ -224,6 +226,25 @@ const SQL = {
         defaultedConn.release(hadDbError || autoDestroyConn ? true : undefined);
       }
     }
+  },
+
+  /**
+   * Shorthand for one-off query.
+   *
+   * @param {string} test - SQL query.
+   * @param {Array} [values]
+   * @param {Object} [options]
+   * @param {pg.Pool} [options.pool]
+   * @param {boolean} [options.autoDestroyConn=false]
+   * @param {string} [options.name] - node-pg passthrough
+   * @param {string} [options.rowMode] - node-pg passthrough
+   * @param {*} [options.types] - node-pg passthrough
+   * @returns {Promise<pg.Result>}
+   */
+  async query(text, values = null, {pool = null, autoDestroyConn = false, name = undefined, rowMode = undefined, types = undefined} = {}) {
+    return this.connected(async function(conn) {
+      return conn.query({text, values, name, rowMode, types});
+    }, {pool, autoDestroyConn});
   },
 
   /**
