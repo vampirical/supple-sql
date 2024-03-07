@@ -183,7 +183,7 @@ function getWhereSql(
       fieldDefinitions,
       key,
       value,
-      {comparison}
+      {comparison, bindParamsUsed}
     );
 
     let sqlLhs = columnSql.lhs;
@@ -220,7 +220,7 @@ function getWhereSql(
   return {query, values};
 }
 
-function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comparison = null} = {}) {
+function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comparison = null, bindParamsUsed = 0} = {}) {
   let lhs = key ? quoteIdentifier(getFieldDbName(fieldDefinitions, key)) : undefined;
   let rhs = null;
   let values = [];
@@ -265,7 +265,7 @@ function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comp
           Array.prototype.push.apply(values, actualValue);
         }
       } else if (actualValue && typeof actualValue.getSql === 'function') {
-        const sqlPack = actualValue.getSql(conn, {isSubquery: true});
+        const sqlPack = actualValue.getSql(conn, {isSubquery: true, bindParamsUsed});
 
         outputComparison = sqlPack.comparison || outputComparison;
         rhs = `(${sqlPack.query})`;
@@ -277,7 +277,7 @@ function getColumnWhereSql(conn, recordName, fieldDefinitions, key, value, {comp
       rhs = isParensComparison ? `(${actualValue})` : actualValue;
     }
   } else if (value && typeof value.getSql === 'function') { // RecordQuery or custom implementor.
-    const sqlPack = value.getSql(conn, {isSubquery: true});
+    const sqlPack = value.getSql(conn, {isSubquery: true, bindParamsUsed});
 
     outputComparison = sqlPack.comparison || comparisonDefs.in;
     rhs = `(${sqlPack.query})`;

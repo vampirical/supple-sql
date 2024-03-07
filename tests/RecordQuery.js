@@ -994,7 +994,22 @@ test('subquery without limit or offset skips order by', async (t) => {
   t.false(queryWithoutOrderBy.includes('ORDER BY'));
 });
 
-test('debug', async (t) => {
+test('number of binds is correct', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({
+      id: SQL.and(
+        [1, 2],
+        SQL.notEqual(3),
+        QueryTestRecord.query({id: 1}, {returns: 'id'}),
+        SQL.notIn(QueryTestRecord.query({id: 4}, {returns: 'id'}))
+      )
+    });
+  const sql = q.getSql();
+  t.is(sql.values.length, 5);
+  t.deepEqual(Array.from(sql.query.matchAll(/\$\d+/g)).map(r => r[0]), ['$1', '$2', '$3', '$4', '$5']);
+});
+
+test('debug coverage', async (t) => {
   new SQL.RecordQuery(pool, QueryTestRecord, {debug: true});
   t.true(true);
 });

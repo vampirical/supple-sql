@@ -502,8 +502,8 @@ class RecordQuery extends Object {
     return results;
   }
 
-  getSql(conn, {count = false, isSubquery = false} = {}) {
-    const wherePack = getWhereSql(conn, this.recordName, this.recordType.fields, this.wheres);
+  getSql(conn, {count = false, isSubquery = false, bindParamsUsed = 0} = {}) {
+    const wherePack = getWhereSql(conn, this.recordName, this.recordType.fields, this.wheres, {bindParamsUsed});
 
     let limitString = null;
     const hasLimit = this._limit !== null;
