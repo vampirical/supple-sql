@@ -9,12 +9,16 @@ const pFs = require('fs').promises;
  *
  * @param {pg.Pool} pool
  * @param {string} pathToSqlFiles
+ * @param {Object} [options]
+ * @param {string} [options.migrationTable='supple_migrations']
+ * @param {boolean} [options.quiet]
+ * @param {function} [options.log=console.info]
  */
-async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_migrations', quiet = false} = {}) {
+async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_migrations', quiet = false, log = console.info} = {}) {
   const migrationFiles = (await pFs.readdir(pathToSqlFiles)).filter(p => p.endsWith('.sql')).sort();
   if (!migrationFiles.length) {
     if (!quiet) {
-      console.info('Migrations to run: 0');
+      log('Migrations to run: 0');
     }
 
     return;
@@ -39,7 +43,7 @@ async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_mig
     }
   }
   if (!quiet) {
-    console.info(`Migrations to run: ${toRunMigrationNames.length}`);
+    log(`Migrations to run: ${toRunMigrationNames.length}`);
   }
 
   for (const [toRunIndex, migrationName] of toRunMigrationNames.entries()) {
@@ -48,7 +52,7 @@ async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_mig
     if (!quiet) {
       const current = String(toRunIndex + 1);
       const max = String(toRunMigrationNames.length);
-      console.info(`Running migration ${current.padStart(max.length - current.length, '0')}/${max}: ${migrationName}`);
+      log(`Running migration ${current.padStart(max.length - current.length, '0')}/${max}: ${migrationName}`);
     }
 
     await this.transaction(async (conn) => {
