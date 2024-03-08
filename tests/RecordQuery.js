@@ -129,6 +129,12 @@ test('is null', async (t) => {
     .run();
   const nResults = Array.from(nQ);
   t.is(nResults.length, 0);
+
+  const connectiveNullValueQ = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({aNumber: SQL.or(99999989, null)})
+    .run();
+  const connectiveNullValueResults = Array.from(connectiveNullValueQ);
+  t.is(connectiveNullValueResults.length, 0);
 });
 
 test('is not null', async (t) => {

@@ -121,8 +121,8 @@ function getWhereSql(
 
   let fields;
   if (lhs) {
-    const wheresProto = Object.getPrototypeOf(wheres);
-    const isPojoLike = wheres !== null && typeof wheres === 'object' && (wheresProto === null || wheresProto === Object.prototype);
+    const wheresProto = wheres !== null && typeof wheres === 'object' ? Object.getPrototypeOf(wheres) : undefined;
+    const isPojoLike = wheresProto === null || wheresProto === Object.prototype;
     if (isPojoLike) {
       throw new WhereParserError(`Where parsing failed for key "${lhs}". Where object literals are not allowed within values.`);
     }
@@ -159,7 +159,7 @@ function getWhereSql(
           fieldDefinitions,
           where,
           {
-            comparison: where.comparison,
+            comparison: where ? where.comparison : null,
             bindParamsUsed: bindParamsUsed + values.length,
             siblings: value.wheres.length - 1,
             lhs: key,
