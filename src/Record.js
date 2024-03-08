@@ -150,10 +150,16 @@ class Record extends Object {
         instance.offset(offset);
       }
       if (orderBy) {
-        if (Array.isArray(orderBy) && !Object.values(sort).includes(orderBy[1])) {
-          instance.orderBy(...orderBy);
-        } else {
+        const isStringOrderBy = typeof orderBy === 'string' || orderBy instanceof String;
+        const isSingleOrderByArray =
+          !isStringOrderBy &&
+          Array.isArray(orderBy) &&
+          orderBy.length === 2 &&
+          sort[orderBy[1]] !== undefined;
+        if (isStringOrderBy || isSingleOrderByArray) {
           instance.orderBy(orderBy);
+        } else {
+          instance.orderBy(...orderBy);
         }
       }
       instance.options(options);
