@@ -668,6 +668,14 @@ class Record extends Object {
       if (typeof value === 'symbol') {
         string = valueNow.description;
         bind = false;
+      } else if (value instanceof SqlValue) {
+        if (value.bind) {
+          string = '$' + ++bindParamNum;
+          bindValue = value.getValue();
+        } else {
+          string = value.getValue();
+          bind = false;
+        }
       } else {
         string = '$' + ++bindParamNum;
         bindValue = value;
@@ -859,9 +867,6 @@ class Record extends Object {
       let value = this.get(field);
       if (value === undefined && hasDefault) {
         value = defaultValue;
-      }
-      if (value instanceof SqlValue) {
-        value = value.value;
       }
       object[field] = value;
     }

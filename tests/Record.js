@@ -396,6 +396,44 @@ test('handles unquoted SqlValue', async (t) => {
   t.like(loaded.data(), allInts.data());
 });
 
+test('load and saves handles bound SqlValue', async (t) => {
+  const boundDate = new SQL.Value(new Date(), {bind: true});
+
+  const notYet = await User.findOne(pool, {optionalAt: boundDate});
+  t.is(notYet, null);
+
+  const source = {
+    email: 'user-with-bound-date-optional-at@example.com',
+    displayName: 'User with Bound Date Optional At',
+    optionalAt: boundDate,
+  };
+  await createUser(source);
+
+  const nowItExists = await User.findOne(pool, {optionalAt: boundDate});
+  t.truthy(nowItExists);
+  t.is(nowItExists.email, source.email);
+  t.is(nowItExists.displayName, source.displayName);
+});
+
+test('load and saves handles unquoted SqlValue with raw SQL', async (t) => {
+  const fancyTimestamp = new SQL.Value(`${SQL.quoteLiteral(new Date().toISOString())}::timestamptz + '1 month'::interval`);
+
+  const notYet = await User.findOne(pool, {optionalAt: fancyTimestamp});
+  t.is(notYet, null);
+
+  const source = {
+    email: 'user-with-fancy-optional-at@example.com',
+    displayName: 'User with Fancy Optional At',
+    optionalAt: fancyTimestamp,
+  };
+  await createUser(source);
+
+  const nowItExists = await User.findOne(pool, {optionalAt: fancyTimestamp});
+  t.truthy(nowItExists);
+  t.is(nowItExists.email, source.email);
+  t.is(nowItExists.displayName, source.displayName);
+});
+
 test('data() defaults and options', async (t) => {
   const source = {
     email: 'record-data-hides-private@example.com',
