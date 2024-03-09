@@ -1,6 +1,6 @@
 const PG = require('pg');
 
-function createTestPool(max = 50, options = {}) {
+function createTestPool(max = 25, options = {}) {
   return new PG.Pool({
     connectionString: process.env.SUP_SQL_TEST_DSN || 'postgresql://localhost/test',
     idleTimeoutMillis: 10000,
