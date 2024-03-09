@@ -789,7 +789,7 @@ class Record extends Object {
 
       let columnsString = null;
       let valuesString = 'DEFAULT VALUES';
-      if (insertValues.length) {
+      if (insertValueStrings.length || insertValues.length) {
         columnsString = `(${insertFields.join(', ')})`;
         valuesString = `VALUES (${insertValueStrings.join(', ')})`;
       }
