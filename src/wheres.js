@@ -170,7 +170,7 @@ function getWhereSql(
         Array.prototype.push.apply(values, currentPack.values);
       }
 
-      const connectiveQuery = joinWithConnective(connectiveQueryParts, value.connective, siblings);
+      const connectiveQuery = joinWithConnective(connectiveQueryParts, value.connective, fields.length - 1);
       queryParts.push(connectiveQuery);
 
       continue;

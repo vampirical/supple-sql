@@ -445,6 +445,17 @@ test('nested array and', async (t) => {
   t.is(results.length, 5);
 });
 
+test('connective used as value wrap itself in parens', async (t) => {
+  const q = await new SQL.RecordQuery(pool, QueryTestRecord)
+    .where({aFlag: SQL.or(true, null), displayName: SQL.like('Display Name 10,%')})
+    .run();
+
+  for (const row of q) {
+    t.true(row.aFlag === true || row.aFlag === null);
+    t.regex(row.displayName, /Display Name 10,.*/);
+  }
+});
+
 test('connectives as values support nested connectives', async (t) => {
   const q = await new SQL.RecordQuery(pool, QueryTestRecord)
     .where({
