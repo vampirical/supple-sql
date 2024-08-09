@@ -183,7 +183,7 @@ function getWhereSql(
       fieldDefinitions,
       key,
       value,
-      {comparison, bindParamsUsed}
+      {comparison, bindParamsUsed: bindParamsUsed + values.length}
     );
 
     let sqlLhs = columnSql.lhs;

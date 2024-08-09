@@ -878,3 +878,20 @@ test('record does not allow set of unknown properties', async (t) => {
   const r = new User(pool);
   t.throws(() => r.bullshit = true, {instanceOf: TypeError});
 });
+
+test('load properly binds values into subqueries', async (t) => {
+  const source = {
+    email: 'record-load-binds@example.com',
+    displayName: 'Record Load Binds',
+    password: 'I will be checked',
+  };
+  await createUser(source);
+
+  const r = new User(pool);
+  r.email = source.email;
+  r.displayName = User.query({displayName: source.displayName}, {returns: 'displayName'});
+  await r.load();
+  t.true(r.isLoaded);
+  t.is(r.displayName, source.displayName); // Round tripping has converted this from a query into a scalar.
+  t.is(r.password, source.password);
+});
