@@ -128,20 +128,21 @@ const SQL = {
    *
    * @param {function} callback
    * @param {Object} [options]
+   * @param {pg.Client} [options.conn] Provided to make it easier to substitute connections.
    * @param {pg.Pool} [options.pool]
    * @param {boolean} [options.autoDestroyConn=false]
    * @returns {Promise<*>}
    */
-  async connected(callback, {pool = null, autoDestroyConn = false} = {}) {
+  async connected(callback, {conn = null, pool = null, autoDestroyConn = false} = {}) {
     if (!callback) {
       throw new MissingRequiredArgError('A callback is required for connected().');
     }
 
     const defaultedPool = pool || this.getDefaultPool();
-    const conn = await getUsablePoolConnection(defaultedPool);
+    const finalConn = conn || await getUsablePoolConnection(defaultedPool);
 
     try {
-      return await callback(conn);
+      return await callback(finalConn);
     } catch (err) {
       const isStatementTimeout = err.code === codeStatementTimeout;
       if (isStatementTimeout) {
@@ -152,7 +153,9 @@ const SQL = {
       // https://github.com/bcoe/c8/issues/229
       /* c8 ignore next 1 */
     } finally {
-      conn.release(autoDestroyConn ? true : undefined);
+      if (!conn) {
+        finalConn.release(autoDestroyConn ? true : undefined);
+      }
     }
   },
 
