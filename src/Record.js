@@ -733,6 +733,9 @@ class Record extends Object {
           'WHERE',
           primaryKeyWhereSql.query,
         ].join(' ');
+        if (ignoreConflict) {
+          updateQuery += ' ON CONFLICT DO NOTHING';
+        }
         if (!skipReload) {
           updateQuery += ' RETURNING ' + this.getFieldsSql();
         }
