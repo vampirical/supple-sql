@@ -95,8 +95,10 @@ async function generateRecord(...args) {
     if (/^nextval\(/.test(defaultString)) {
       defaultValue = null; // Serial type handling is responsible not defaultValue.
     } else if (defaultString && defaultString !== 'null') {
-      const isNumeric = regexNumeric.test(defaultString);
-      if (isNumeric) {
+      const lowerDefaultString = defaultString.toLowerCase();
+      if (lowerDefaultString === 'current_timestamp' || lowerDefaultString === 'current_timestamp()' || lowerDefaultString === 'now' || lowerDefaultString === 'now()') {
+        defaultValue = 'SQL.valueNow';
+      } else if (regexNumeric.test(defaultString)) {
         defaultValue = parseFloat(defaultString);
       } else {
         defaultValue = row.column_default.replace(regexReplaceTextWrapper, '$1');
