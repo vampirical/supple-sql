@@ -95,10 +95,8 @@ async function generateRecord(...args) {
     if (/^nextval\(/.test(defaultString)) {
       defaultValue = null; // Serial type handling is responsible not defaultValue.
     } else if (defaultString && defaultString !== 'null') {
-      const lowerDefaultString = defaultString.toLowerCase();
-      if (lowerDefaultString === 'current_timestamp' || lowerDefaultString === 'current_timestamp()' || lowerDefaultString === 'now' || lowerDefaultString === 'now()') {
-        defaultValue = 'SQL.valueNow';
-      } else if (regexNumeric.test(defaultString)) {
+      const isNumeric = regexNumeric.test(defaultString);
+      if (isNumeric) {
         defaultValue = parseFloat(defaultString);
       } else {
         defaultValue = row.column_default.replace(regexReplaceTextWrapper, '$1');
@@ -171,12 +169,19 @@ async function generateRecord(...args) {
       fieldsString += `, nullable: ${field.nullable}`;
     }
     if (field.defaultValue) {
-      fieldsString += `, defaultValue: ${
-        field.defaultValue &&
-        `symbol(${String(field.defaultValue).toLowerCase()})` === String(this.valueNow).toLowerCase()
-          ? 'SQL.valueNow'
-          : wrapString(field.defaultValue)
-      }`;
+      let output;
+      const lowerDefaultString = String(field.defaultValue).toLowerCase();
+      if (
+        `symbol(${lowerDefaultString})` === String(this.valueNow).toLowerCase() ||
+        lowerDefaultString === 'current_timestamp' || lowerDefaultString === 'current_timestamp()' ||
+        lowerDefaultString === 'now' || lowerDefaultString === 'now()'
+      ) {
+        output = 'SQL.valueNow';
+      } else {
+        output = wrapString(field.defaultValue);
+      }
+
+      fieldsString += `, defaultValue: ${output}`;
     }
     fieldsString += '}';
   }
