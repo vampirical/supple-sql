@@ -57,7 +57,7 @@ async function runMigrations(pool, pathToSqlFiles, {migrationTable = 'supple_mig
 
     await this.transaction(async (conn) => {
       await conn.query(migrationContent);
-      await conn.query(`INSERT INTO ${quoteIdentifier(migrationTable)} VALUES ($1)`, [migrationName]);
+      await conn.query(`INSERT INTO ${quoteIdentifier(migrationTable)} VALUES ($1) ON CONFLICT DO NOTHING`, [migrationName]);
     }, {pool});
   }
 }
